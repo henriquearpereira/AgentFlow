@@ -3,12 +3,12 @@ import argparse
 import os
 import textwrap
 import time
+import torch
 from pathlib import Path
 from dotenv import load_dotenv
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -19,9 +19,6 @@ class ResearchAgent:
     def __init__(self):
         print("🚀 Initializing Research Agent...")
         self.start_time = time.time()
-        
-        # Initialize search engine
-        self.search = DuckDuckGoSearchAPIWrapper()
         
         # Model configuration
         self.model_name = "deepseek-ai/deepseek-coder-6.7b-instruct"
@@ -65,9 +62,18 @@ class ResearchAgent:
         )
 
     def run_search(self, query: str) -> str:
-        """Get search results"""
+        """Get search results using DuckDuckGo"""
         print(f"🔍 Searching: '{query}'...")
-        return self.search.run(query)
+        from duckduckgo_search import DDGS
+        try:
+            results = []
+            ddgs = DDGS()
+            for result in ddgs.text(query, max_results=5):
+                results.append(result['body'])
+            return "\n\n".join(results)
+        except Exception as e:
+            print(f"⚠️ Search error: {e}")
+            return "No search results available."
 
     def generate_report(self, topic: str, search_results: str) -> str:
         """Generate research report"""
