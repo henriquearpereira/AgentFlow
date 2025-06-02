@@ -1,3 +1,9 @@
+# Set Hugging Face cache to D: drive
+import os
+os.environ['HF_HOME'] = 'D:/.cache/huggingface'
+os.environ['TRANSFORMERS_CACHE'] = 'D:/.cache/huggingface'
+os.makedirs(os.environ['HF_HOME'], exist_ok=True)
+
 # research_agent.py
 import argparse
 import os
@@ -21,7 +27,7 @@ class ResearchAgent:
         self.start_time = time.time()
         
         # Model configuration
-        self.model_name = "deepseek-ai/deepseek-coder-6.7b-instruct"
+        self.model_name = "HuggingFaceH4/zephyr-7b-beta"
         self.load_model()
         print(f"✅ Model loaded in {time.time() - self.start_time:.1f}s")
         
@@ -34,6 +40,9 @@ class ResearchAgent:
         ])
 
     def load_model(self):
+        """Load model with memory optimization"""
+        # Reduce memory overhead
+        torch.set_grad_enabled(False)
         """Load model with memory optimization for Windows"""
         try:
             # Try loading with GPU if available
