@@ -1,10 +1,8 @@
 import os
-# Set Hugging Face cache to D: drive with raw string
-os.environ['HF_HOME'] = r'D:\.cache\huggingface'  # Fixed escape sequence
+os.environ['HF_HOME'] = r'D:\.cache\huggingface'
 os.makedirs(os.environ['HF_HOME'], exist_ok=True)
 
 import argparse
-import textwrap
 import time
 import torch
 import re
@@ -37,240 +35,228 @@ class ResearchAgent:
         self.load_model()
         print(f"✅ Model loaded in {time.time() - self.start_time:.1f}s")
         
-        # Enhanced prompt template
+        # Enhanced prompt template with strict formatting
         self.prompt_template = ChatPromptTemplate.from_messages([
-            ("system", "You are a data analyst creating executive briefings. Follow these rules:\n"
-             "1. Extract ONLY numerical data, statistics, and quantifiable facts\n"
-             "2. Ignore marketing fluff, opinions, and repeated information\n"
-             "3. Structure in these sections:\n"
-             "   - Key Statistics (bulleted numbers only)\n"
-             "   - Trends (1-2 sentences)\n"
-             "   - Data Sources (list URLs)\n"
-             "4. ABSOLUTELY NO: introductions, conclusions, or filler text\n"
-             "5. MAX 150 words total\n"
-             "6. If data is insufficient, state: 'Insufficient reliable data found'"),
+            ("system", "Create a data-focused executive briefing using ONLY these sections:\n"
+             "1. Key Statistics: Bullet points with ONLY numbers, salaries, percentages, or years\n"
+             "2. Trends: 1-2 sentences describing patterns\n"
+             "3. Data Sources: List of URLs\n\n"
+             "RULES:\n"
+             "- Extract ONLY quantifiable facts\n"
+             "- Ignore all opinions, marketing text, and non-numerical data\n"
+             "- ABSOLUTELY NO introductions, conclusions, or explanations\n"
+             "- MAX 100 words total\n"
+             "- If insufficient data: 'Insufficient reliable data found'"),
             ("human", "TOPIC: {topic}\n\nSEARCH RESULTS:\n{search_results}")
         ])
 
     def load_model(self):
-        """Load model with memory optimization"""
-        torch.set_grad_enabled(False)  # Reduce memory usage
+        """Optimized model loading with memory efficiency"""
+        torch.set_grad_enabled(False)
+        
+        # Use float32 for CPU compatibility
+        dtype = torch.float32
         
         try:
-            # Load tokenizer and model
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            # Load with optimized config
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name, 
+                trust_remote_code=True
+            )
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
                 device_map="auto" if torch.cuda.is_available() else "cpu",
-                torch_dtype="auto" if torch.cuda.is_available() else torch.float32
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True
             )
             
-            # Create text generation pipeline
+            # Create pipeline with optimized settings
             self.pipeline = pipeline(
                 "text-generation",
                 model=self.model,
                 tokenizer=self.tokenizer,
-                max_new_tokens=300,  # Shorter output
-                temperature=0.3,     # Less random
-                top_p=0.9,           # Focus on high probability words
-                repetition_penalty=1.5  # Discourage repetition
+                max_new_tokens=100,          # Reduced tokens
+                temperature=0.4,              # Less randomness
+                top_k=30,                     # Narrower selection
+                do_sample=True,
+                num_return_sequences=1
             )
         except Exception as e:
             print(f"⚠️ Model loading error: {e}")
             raise
 
     def run_search(self, query: str) -> str:
-        """Get deduplicated and condensed search results"""
+        """Focused search with salary-specific extraction"""
         print(f"🔍 Searching: '{query}'...")
         try:
-            seen_domains = set()
-            unique_results = []
-            
+            results = []
             with DDGS() as ddgs:
-                for i, result in enumerate(ddgs.text(query, max_results=10)):
-                    # Skip duplicate domains
-                    domain = result['href'].split('/')[2]
-                    if domain in seen_domains:
-                        continue
-                    seen_domains.add(domain)
+                for i, result in enumerate(ddgs.text(query, max_results=7)):
+                    # Extract salary figures specifically
+                    salary_pattern = r'(€?\d{1,3}(?:[,\s]?\d{3})*(?:\.\d{2})?\s?(?:per year|per month|/yr|/mo|annually|monthly))'
+                    salaries = re.findall(salary_pattern, result['body'], re.IGNORECASE)
                     
-                    # Extract key facts
-                    body = result['body']
-                    
-                    # Find salary numbers, percentages, years
-                    key_facts = []
-                    if "salary" in query.lower():
-                        salary_matches = re.findall(r'(\€?\d{1,3}(?:[,\s]?\d{3})*(?:\.\d{2})?\s?(?:per year|per month|/yr|/mo|€))', body, re.IGNORECASE)
-                        if salary_matches:
-                            key_facts.extend(salary_matches[:3])  # Max 3 salary matches
-                    
-                    # Find other numerical data
-                    number_matches = re.findall(r'\b\d{2,4}\b', body)  # Find 2-4 digit numbers
-                    if number_matches:
-                        key_facts.extend(number_matches[:2])  # Max 2 other numbers
-                    
-                    # If no numbers found, use first meaningful sentence
-                    if not key_facts:
-                        sentences = [s.strip() for s in body.split('.') if s.strip() and len(s.split()) > 5]
-                        if sentences:
-                            key_facts.append(sentences[0][:120] + "...")
+                    # Extract other numerical data
+                    other_nums = re.findall(r'\b\d{2,5}\b', result['body'])
                     
                     # Build result snippet
-                    snippet = f"[[Source {i+1}]] " + "; ".join(set(key_facts)) + f" ({result['href']})"
-                    unique_results.append(snippet)
+                    if salaries or other_nums:
+                        snippet = f"Source {i+1}: "
+                        if salaries:
+                            # Convert set to list for subscripting
+                            snippet += "Salaries: " + ", ".join(list(set(salaries))[:3]) + ". "
+                        if other_nums:
+                            snippet += "Numbers: " + ", ".join(list(set(other_nums))[:3])
+                        snippet += f" | {result['href']}"
+                        results.append(snippet)
                     
-                    # Stop when we have 5 high-quality sources
-                    if len(unique_results) >= 5:
+                    if len(results) >= 4:  # Use fewer but higher quality sources
                         break
-                        
-            return "\n".join(unique_results)
+            
+            return "\n".join(results) if results else "No numerical data found"
         except Exception as e:
             print(f"⚠️ Search error: {e}")
-            return "No search results available."
+            return "Search service unavailable"
 
     def generate_report(self, topic: str, search_results: str) -> str:
-        """Generate concise research report"""
-        attempts = 0
-        best_report = ""
+        """Faster report generation with strict formatting"""
+        print(f"📊 Generating report for: '{topic}'...")
+        gen_start = time.time()
         
-        while attempts < 2:  # Reduced to 2 attempts for speed
-            messages = self.prompt_template.format_messages(topic=topic, search_results=search_results)
-            prompt_text = "\n".join([m.content for m in messages])
-            
-            # Generate response
+        # Create prompt
+        messages = self.prompt_template.format_messages(topic=topic, search_results=search_results)
+        prompt_text = "\n".join([m.content for m in messages])
+        
+        try:
+            # Generate with timeout
             response = self.pipeline(
                 prompt_text,
+                max_new_tokens=100,
                 pad_token_id=self.tokenizer.eos_token_id,
-                max_length=500  # Prevent excessively long outputs
+                num_beams=1,  # Disable beam search for speed
+                truncation=True  # Add truncation to prevent long processing
             )
             
-            # Extract new text
+            # Extract generated text
             full_text = response[0]['generated_text']
             generated_text = full_text.split(prompt_text)[-1].strip()
             
-            # Post-process to enforce conciseness
-            clean_report = self.clean_report(generated_text)
-            
-            # Quality check - keep best attempt
-            if self.is_high_quality(clean_report) and (not best_report or len(clean_report) < len(best_report)):
-                best_report = clean_report
-                
-            attempts += 1
-        
-        return best_report or "⚠️ Unable to generate quality report. Try refining your query."
+            # Enforce section structure
+            return self.enforce_structure(generated_text)
+        except Exception as e:
+            print(f"⚠️ Generation error: {e}")
+            return "Report generation failed"
+        finally:
+            print(f"⏱️  Generation time: {time.time() - gen_start:.1f}s")
 
-    def clean_report(self, text: str) -> str:
-        """Enforce strict formatting rules and remove repetition"""
-        # Remove repetitive sentences using sentence hashing
-        sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', text)
-        unique_sentences = []
-        seen = set()
+    def enforce_structure(self, text: str) -> str:
+        """Force the report into required sections"""
+        # Initialize sections
+        stats = []
+        trends = []
+        sources = []
         
-        for s in sentences:
-            # Simple hash: first 3 words
-            words = s.split()
-            if len(words) < 4:
+        # Process each line
+        for line in text.split('\n'):
+            line = line.strip()
+            if not line:
                 continue
-            key = " ".join(words[:3]).lower()
-            
-            if key not in seen:
-                seen.add(key)
-                unique_sentences.append(s)
-        
-        # Rebuild with enforced structure
-        report = ""
-        stats_section = []
-        trends_section = []
-        sources_section = []
-        
-        for s in unique_sentences:
-            if "key statistic" in s.lower():
+                
+            # Detect section headers
+            if re.match(r'(key stat|number|data point)', line, re.IGNORECASE):
                 # Extract bullet points
-                bullets = re.findall(r'[-•]\s*(.*?)(?=\n|$)', s)
+                bullets = re.findall(r'[-•*]\s*(.*?)(?=\n|$)', line)
                 if bullets:
-                    stats_section.extend(bullets)
-            elif "trend" in s.lower():
-                trends_section.append(s)
-            elif "source" in s.lower():
+                    stats.extend(bullets)
+                elif any(char.isdigit() for char in line):
+                    stats.append(line)
+            elif re.match(r'(trend|pattern|change)', line, re.IGNORECASE):
+                trends.append(line)
+            elif 'http' in line or 'www.' in line:
                 # Extract URLs
-                urls = re.findall(r'https?://[^\s\)]+', s)
+                urls = re.findall(r'https?://[^\s\)]+', line)
                 if urls:
-                    sources_section.extend(urls)
-            elif any(char.isdigit() for char in s) and len(s) < 100:
-                stats_section.append(s)
-            elif "http" in s:
-                sources_section.append(s)
+                    sources.extend(urls)
+            elif any(char.isdigit() for char in line):
+                stats.append(line)
+            elif len(line.split()) < 8:  # Short lines likely metadata
+                continue
+            else:
+                trends.append(line)
         
         # Build structured report
-        if stats_section:
+        report = ""
+        if stats:
             report += "## Key Statistics\n"
-            report += "\n".join([f"- {stat}" for stat in set(stats_section)[:5]]) + "\n\n"
+            # Filter out non-numeric stats and limit to 5
+            numeric_stats = [s for s in stats if any(char.isdigit() for char in s)][:5]
+            report += "\n".join([f"- {s}" for s in numeric_stats]) + "\n\n"
         
-        if trends_section:
+        if trends:
             report += "## Trends\n"
-            report += " ".join(set(trends_section)[:2]) + "\n\n"
+            # Take first 2 unique trend statements
+            unique_trends = list(set(trends))[:2]
+            report += " ".join(unique_trends) + "\n\n"
         
-        if sources_section:
+        if sources:
             report += "## Data Sources\n"
-            report += "\n".join([f"- {src}" for src in set(sources_section)[:3]])
+            unique_sources = list(set(sources))[:3]
+            report += "\n".join([f"- {s}" for s in unique_sources])
         
-        # If no structure found, create minimal version
+        # Fallback if structure missing
         if not report:
-            stats = [s for s in unique_sentences if any(char.isdigit() for char in s)][:3]
-            sources = [s for s in unique_sentences if "http" in s][:2]
-            report = "## Key Statistics\n- " + "\n- ".join(stats) 
-            if sources:
-                report += "\n\n## Data Sources\n- " + "\n- ".join(sources)
+            return "⚠️ Insufficient reliable data found"
         
-        return report.strip()[:600]  # Hard character limit
-
-    def is_high_quality(self, report: str) -> bool:
-        """Check for essential quality markers"""
-        if "insufficient" in report.lower() or "unable" in report.lower():
-            return False
-            
-        has_numbers = any(char.isdigit() for char in report)
-        has_sources = "http" in report or "www." in report
-        not_too_short = len(report.split()) > 15
-        not_repetitive = len(set(report.split())) > len(report.split()) * 0.5
-        
-        return has_numbers and has_sources and not_too_short and not_repetitive
+        return report.strip()
 
     def create_pdf(self, content: str, filename: str):
-        """Generate PDF report with optimized formatting"""
-        print(f"📄 Creating PDF: {filename}")
-        Path(filename).parent.mkdir(parents=True, exist_ok=True)
-        
-        doc = SimpleDocTemplate(filename, pagesize=letter)
-        styles = getSampleStyleSheet()
-        story = []
-        
-        # Title
-        story.append(Paragraph("Research Report", styles['Title']))
-        story.append(Spacer(1, 12))
-        
-        # Special formatting for sections
-        for line in content.split('\n'):
-            if line.startswith('## '):
-                story.append(Paragraph(line[3:], styles['Heading2']))
-            elif line.startswith('- ') and ('http' in line or 'www.' in line):
-                story.append(Paragraph(line[2:], styles['Italic']))
-            elif line.startswith('- '):
-                story.append(Paragraph(line, styles['Bullet']))
-            else:
-                story.append(Paragraph(line, styles['BodyText']))
+        """PDF creation with validation"""
+        if "⚠️" in content or "insufficient" in content.lower():
+            print("❌ Aborting PDF - no valid data")
+            return False
             
-            story.append(Spacer(1, 4))
-                
-        doc.build(story)
+        print(f"📄 Creating PDF: {filename}")
+        try:
+            # Create directory if needed
+            Path(filename).parent.mkdir(parents=True, exist_ok=True)
+            
+            doc = SimpleDocTemplate(filename, pagesize=letter)
+            styles = getSampleStyleSheet()
+            story = []
+            
+            # Title
+            story.append(Paragraph("Research Report", styles['Title']))
+            
+            # Extract topic from filename (safe method)
+            topic = Path(filename).stem.replace('_', ' ').title()
+            story.append(Paragraph(f"Topic: {topic}", styles['Heading2']))
+            story.append(Spacer(1, 12))
+            
+            # Process content
+            for section in content.split('\n\n'):
+                if section.startswith('## '):
+                    story.append(Paragraph(section[3:], styles['Heading2']))
+                elif section.startswith('- ') and 'http' in section:
+                    story.append(Paragraph(section[2:], styles['Italic']))
+                elif section.startswith('- '):
+                    story.append(Paragraph(section, styles['Bullet']))
+                else:
+                    story.append(Paragraph(section, styles['BodyText']))
+                story.append(Spacer(1, 8))
+                    
+            doc.build(story)
+            return True
+        except Exception as e:
+            print(f"⚠️ PDF creation failed: {e}")
+            return False
 
 def select_model():
-    """User-friendly model selection"""
+    """Model selection with timing estimates"""
     print("\n" + "="*50)
     print("MODEL SELECTION")
     print("="*50)
-    print("1. Zephyr-7B-Beta: Better quality but slower (7GB)")
-    print("2. Phi-2: Faster and lighter but simpler outputs (2.7GB)")
+    print("1. Zephyr-7B: Higher quality (~60s generation on CPU)")
+    print("2. Phi-2: Faster (~15s generation on CPU)")
     print("3. Exit")
     
     while True:
@@ -295,13 +281,38 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # Initialize agent
+    start_time = time.time()
     agent = ResearchAgent(model_choice)
+    model_load_time = time.time() - start_time
     
     # Execute workflow
+    search_start = time.time()
     search_results = agent.run_search(args.query)
-    report_content = agent.generate_report(args.query, search_results)
-    agent.create_pdf(report_content, args.output)
+    search_time = time.time() - search_start
     
-    total_time = time.time() - agent.start_time
-    print(f"✅ Research completed in {total_time:.1f}s")
-    print(f"📁 Output saved to: {os.path.abspath(args.output)}")
+    report_start = time.time()
+    report_content = agent.generate_report(args.query, search_results)
+    report_time = time.time() - report_start
+    
+    pdf_start = time.time()
+    pdf_success = agent.create_pdf(report_content, args.output)
+    pdf_time = time.time() - pdf_start
+    
+    total_time = time.time() - start_time
+    
+    # Print diagnostics
+    print("\n⏱️  PERFORMANCE DIAGNOSTICS:")
+    print(f"  Model loading: {model_load_time:.1f}s")
+    print(f"  Search: {search_time:.1f}s")
+    print(f"  Report generation: {report_time:.1f}s")
+    print(f"  PDF creation: {pdf_time:.1f}s")
+    print(f"✅ Total time: {total_time:.1f}s")
+    
+    if pdf_success:
+        print(f"📁 Output saved to: {os.path.abspath(args.output)}")
+    else:
+        print("❌ No PDF generated due to errors")
+    
+    # Print final report content
+    print("\n📝 FINAL REPORT CONTENT:")
+    print(report_content)
