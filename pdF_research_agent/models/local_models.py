@@ -1,4 +1,4 @@
-"""Local model implementations - extracted from original research_agent.py"""
+"""Local model implementations - Fixed initialization and interface issues"""
 
 import os
 import torch
@@ -7,12 +7,39 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from config.models import get_model_info
 
 class LocalModelHandler:
-    def __init__(self, model_key="phi-2"):
+    def __init__(self, model_key="phi-2", max_tokens=500, temperature=0.2, verbose=False):
+        """
+        Initialize LocalModelHandler with proper parameter handling
+        
+        Args:
+            model_key: String key for the model (e.g., "phi-2", "zephyr", "mistral")
+            max_tokens: Maximum tokens for generation
+            temperature: Generation temperature
+            verbose: Enable verbose output
+        """
+        # Handle case where model_key might be passed as part of a config dict
+        if isinstance(model_key, dict):
+            config = model_key
+            model_key = config.get('model_key', 'phi-2')
+            max_tokens = config.get('max_tokens', 500)
+            temperature = config.get('temperature', 0.2)
+            verbose = config.get('verbose', False)
+        
         print(f"🚀 Initializing Local Model: {model_key}...")
         self.start_time = time.time()
         
-        # Get model configuration
+        # Store parameters
         self.model_key = model_key
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.verbose = verbose
+        
+        # Initialize model-related attributes
+        self.model = None
+        self.tokenizer = None
+        self.pipeline = None
+        
+        # Get model configuration
         model_config = get_model_info("local", model_key)
         
         if not model_config:
@@ -31,6 +58,29 @@ class LocalModelHandler:
         
         # Enhanced prompt template optimized for research reports
         self.prompt_template = self._get_prompt_template()
+
+    def get(self, key, default=None):
+        """
+        Dictionary-like interface for compatibility with ResearchAgent
+        This method allows the handler to be accessed like a dictionary
+        """
+        if hasattr(self, key):
+            return getattr(self, key)
+        return default
+
+    def __getitem__(self, key):
+        """Allow dictionary-style access"""
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(f"'{key}' not found in LocalModelHandler")
+
+    def __contains__(self, key):
+        """Support 'in' operator"""
+        return hasattr(self, key)
+
+    def keys(self):
+        """Return available keys"""
+        return [attr for attr in dir(self) if not attr.startswith('_')]
 
     def _get_prompt_template(self):
         """Get optimized prompt template based on model"""
@@ -158,32 +208,32 @@ Focus on specific numbers and professional analysis:"""
         if self.model_key == "phi-2":
             return {
                 **base_settings,
-                "max_new_tokens": 400,
-                "temperature": 0.2,
+                "max_new_tokens": min(self.max_tokens, 400),
+                "temperature": self.temperature,
                 "top_p": 0.9,
                 "repetition_penalty": 1.1
             }
         elif self.model_key == "zephyr":
             return {
                 **base_settings,
-                "max_new_tokens": 500,
-                "temperature": 0.3,
+                "max_new_tokens": min(self.max_tokens, 500),
+                "temperature": self.temperature,
                 "top_p": 0.95,
                 "repetition_penalty": 1.05
             }
         elif self.model_key == "mistral":
             return {
                 **base_settings,
-                "max_new_tokens": 450,
-                "temperature": 0.25,
+                "max_new_tokens": min(self.max_tokens, 450),
+                "temperature": self.temperature,
                 "top_p": 0.9,
                 "repetition_penalty": 1.1
             }
         else:
             return {
                 **base_settings,
-                "max_new_tokens": 400,
-                "temperature": 0.3,
+                "max_new_tokens": min(self.max_tokens, 400),
+                "temperature": self.temperature,
                 "top_p": 0.9,
                 "repetition_penalty": 1.1
             }
@@ -338,12 +388,15 @@ The Portuguese tech market shows strong demand for Python developers with compet
     def cleanup(self):
         """Clean up model resources"""
         try:
-            if hasattr(self, 'model'):
+            if hasattr(self, 'model') and self.model is not None:
                 del self.model
-            if hasattr(self, 'tokenizer'):
+                self.model = None
+            if hasattr(self, 'tokenizer') and self.tokenizer is not None:
                 del self.tokenizer
-            if hasattr(self, 'pipeline'):
+                self.tokenizer = None
+            if hasattr(self, 'pipeline') and self.pipeline is not None:
                 del self.pipeline
+                self.pipeline = None
             
             # Clear CUDA cache if available  
             if torch.cuda.is_available():
@@ -352,3 +405,16 @@ The Portuguese tech market shows strong demand for Python developers with compet
             print("🧹 Model resources cleaned up")
         except Exception as e:
             print(f"⚠️ Cleanup warning: {e}")
+
+    # Compatibility methods for the ResearchAgent interface
+    def test_connection(self):
+        """Test connection - for compatibility with API models"""
+        return self.test_generation()
+
+    def __str__(self):
+        """String representation of the handler"""
+        return f"LocalModelHandler(model_key={self.model_key}, model_name={self.model_name})"
+
+    def __repr__(self):
+        """Detailed representation of the handler"""
+        return f"LocalModelHandler(model_key='{self.model_key}', model_name='{self.model_name}', max_tokens={self.max_tokens}, temperature={self.temperature})"

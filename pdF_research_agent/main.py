@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 AI Research Agent - Main Entry Point
-Enhanced with local and API model support
+Enhanced with local and API model support - FIXED VERSION
 """
 
 import os
@@ -26,7 +26,7 @@ os.makedirs(os.environ['HF_HOME'], exist_ok=True)
 from config.models import get_available_models, list_all_models
 from models.local_models import LocalModelHandler
 from models.api_models import APIModelHandler
-from agents.research_agent import ResearchAgent  # Fixed: Changed from EnhancedResearchAgent to ResearchAgent
+from agents.research_agent import ResearchAgent
 
 def display_model_menu():
     """Display comprehensive model selection menu"""
@@ -165,27 +165,31 @@ def select_model_interactive():
             print(f"✅ Selected: {provider.upper()} {model_key}")
             return provider, model_key
 
-def create_agent_config(provider: str, model_key: str, args) -> dict:
-    """Create configuration dictionary for ResearchAgent"""
-    config = {
-        'max_tokens': args.max_tokens,
-        'temperature': args.temperature,
-        'verbose': args.verbose
-    }
-    
+def create_model_handler(provider: str, model_key: str, args):
+    """Create the appropriate model handler"""
     if provider == "local":
-        config['use_api_model'] = False
-        config['model_name'] = model_key
+        return LocalModelHandler(
+            model_key=model_key,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            verbose=args.verbose
+        )
     else:
-        config['use_api_model'] = True
-        config['api_provider'] = provider
-        config['model_name'] = model_key
-        
-        # Add API key
+        # API model handler
         api_key_var = f"{provider.upper()}_API_KEY"
-        config['api_key'] = os.getenv(api_key_var)
-    
-    return config
+        api_key = os.getenv(api_key_var)
+        
+        if not api_key:
+            raise ValueError(f"API key {api_key_var} not found in environment")
+        
+        return APIModelHandler(
+            provider=provider,
+            model_name=model_key,
+            api_key=api_key,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            verbose=args.verbose
+        )
 
 def main():
     """Main application entry point"""
@@ -235,13 +239,16 @@ Examples:
     start_time = time.time()
     
     try:
-        # Create agent configuration
+        # Create model handler
         print(f"\n🔧 Initializing {provider.upper()} model handler...")
-        config = create_agent_config(provider, model_key, args)
+        model_handler = create_model_handler(provider, model_key, args)
         
-        # Create research agent
+        if args.verbose:
+            print(f"🔍 Debug - Model handler type: {type(model_handler)}")
+        
+        # Create research agent with the model handler
         print("🔬 Setting up research agent...")
-        agent = ResearchAgent(config)  # Fixed: Changed from EnhancedResearchAgent to ResearchAgent
+        agent = ResearchAgent(model_handler)
         
         # Ensure output directory exists
         output_path = Path(args.output)
@@ -296,7 +303,9 @@ Examples:
         sys.exit(1)
     finally:
         # Cleanup resources
-        if 'agent' in locals():
+        if 'model_handler' in locals():
+            model_handler.cleanup()
+        if 'agent' in locals() and hasattr(agent, 'cleanup'):
             agent.cleanup()
 
 if __name__ == "__main__":
