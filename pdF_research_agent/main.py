@@ -239,16 +239,39 @@ Examples:
     start_time = time.time()
     
     try:
-        # Create model handler
+        # CRITICAL FIX: Create model handler ONCE and pass it to ResearchAgent
         print(f"\n🔧 Initializing {provider.upper()} model handler...")
-        model_handler = create_model_handler(provider, model_key, args)
+        
+        if provider == "local":
+            model_handler = LocalModelHandler(
+                model_key=model_key,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                verbose=args.verbose
+            )
+        else:
+            # API model handler
+            api_key_var = f"{provider.upper()}_API_KEY"
+            api_key = os.getenv(api_key_var)
+            
+            if not api_key:
+                raise ValueError(f"API key {api_key_var} not found in environment")
+            
+            model_handler = APIModelHandler(
+                provider=provider,
+                model_name=model_key,
+                api_key=api_key,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                verbose=args.verbose
+            )
         
         if args.verbose:
-            print(f"🔍 Debug - Model handler type: {type(model_handler)}")
+            print(f"🔍 Debug - Model handler created: {type(model_handler)}")
         
-        # Create research agent with the model handler
+        # Create research agent with the EXISTING model handler
         print("🔬 Setting up research agent...")
-        agent = ResearchAgent(model_handler)
+        agent = ResearchAgent(model_handler)  # Pass the existing handler
         
         # Ensure output directory exists
         output_path = Path(args.output)

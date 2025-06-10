@@ -1,10 +1,10 @@
 """
-Core Research Agent module
+Core Research Agent module - FIXED VERSION
 """
 
 import time
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 
 from utils.search import SearchEngine
 from agents.pdf_generator import PDFGenerator
@@ -15,29 +15,29 @@ from models.api_models import APIModelHandler
 class ResearchAgent:
     """Main research agent that coordinates search, analysis, and report generation"""
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, model_handler):
         """
-        Initialize research agent with configuration
+        Initialize research agent with an existing model handler
         
         Args:
-            config: Configuration dictionary containing model settings, etc.
+            model_handler: Pre-initialized LocalModelHandler or APIModelHandler instance
         """
         print("🚀 Initializing Research Agent...")
         self.start_time = time.time()
-        self.config = config
         
-        # Initialize components
+        # CRITICAL FIX: Use the existing model handler directly
+        # Don't create a new one or reinitialize it
+        if isinstance(model_handler, (LocalModelHandler, APIModelHandler)):
+            print(f"✅ Using existing {type(model_handler).__name__}")
+            self.model_handler = model_handler
+        else:
+            # This should not happen with the fixed main.py, but kept for safety
+            raise ValueError(f"Invalid model handler type: {type(model_handler)}")
+        
+        # Initialize other components
         self.search_engine = SearchEngine()
         self.pdf_generator = PDFGenerator()
         
-        # Initialize model handler based on config
-        if config.get('use_api_model', False):
-            self.model_handler = APIModelHandler(config)
-        else:
-            self.model_handler = LocalModelHandler(config)
-        
-        # Load model
-        self.model_handler.load_model()
         print(f"✅ Research Agent initialized in {time.time() - self.start_time:.1f}s")
         
         # Enhanced prompt template
@@ -137,16 +137,20 @@ Focus on actual numbers and be specific. Start your response with "## Key Statis
             return self._create_enhanced_fallback_report(topic, search_results)
         
         try:
-            # Create the prompt
-            prompt = self.prompt_template.format(
-                topic=topic,
-                search_results=search_results
-            )
-            
-            print(f"🤖 Analyzing {len(search_results)} characters of search data...")
-            
-            # Generate using model handler
-            generated_text = self.model_handler.generate(prompt)
+            # FIXED: Use the model handler's generate method directly
+            # Check if it's a LocalModelHandler and has generate_report method
+            if hasattr(self.model_handler, 'generate_report'):
+                # Use the specialized generate_report method for LocalModelHandler
+                generated_text = self.model_handler.generate_report(topic, search_results)
+            else:
+                # Use the generic generate method for API handlers
+                prompt = self.prompt_template.format(
+                    topic=topic,
+                    search_results=search_results
+                )
+                
+                print(f"🤖 Analyzing {len(search_results)} characters of search data...")
+                generated_text = self.model_handler.generate(prompt)
             
             # Clean and validate the output
             cleaned_report = self._clean_and_validate_report(generated_text, topic, search_results)
@@ -266,7 +270,13 @@ Focus on actual numbers and be specific. Start your response with "## Key Statis
     
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the current model"""
-        return self.model_handler.get_model_info()
+        if hasattr(self.model_handler, 'get_model_info'):
+            return self.model_handler.get_model_info()
+        else:
+            return {
+                "handler_type": type(self.model_handler).__name__,
+                "details": str(self.model_handler)
+            }
     
     def cleanup(self):
         """Cleanup resources"""

@@ -25,6 +25,27 @@ class LocalModelHandler:
             temperature = config.get('temperature', 0.2)
             verbose = config.get('verbose', False)
         
+        # CRITICAL FIX: Handle case where an existing LocalModelHandler is passed
+        elif isinstance(model_key, LocalModelHandler):
+            # If a LocalModelHandler instance is passed, extract its model_key
+            existing_handler = model_key
+            model_key = existing_handler.model_key
+            max_tokens = existing_handler.max_tokens
+            temperature = existing_handler.temperature
+            verbose = existing_handler.verbose
+            print(f"🔄 Reusing existing LocalModelHandler configuration for {model_key}")
+            
+        # Handle case where model_key might be the string representation of a handler
+        elif isinstance(model_key, str) and "LocalModelHandler" in model_key:
+            # Extract the actual model key from the string representation
+            import re
+            match = re.search(r'model_key=([^,)]+)', model_key)
+            if match:
+                model_key = match.group(1).strip("'\"")
+            else:
+                model_key = "phi-2"  # fallback
+            print(f"🔧 Extracted model key from string representation: {model_key}")
+        
         print(f"🚀 Initializing Local Model: {model_key}...")
         self.start_time = time.time()
         
