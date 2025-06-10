@@ -26,7 +26,7 @@ os.makedirs(os.environ['HF_HOME'], exist_ok=True)
 from config.models import get_available_models, list_all_models
 from models.local_models import LocalModelHandler
 from models.api_models import APIModelHandler
-from agents.research_agent import EnhancedResearchAgent
+from agents.research_agent import ResearchAgent  # Fixed: Changed from EnhancedResearchAgent to ResearchAgent
 
 def display_model_menu():
     """Display comprehensive model selection menu"""
@@ -165,14 +165,27 @@ def select_model_interactive():
             print(f"✅ Selected: {provider.upper()} {model_key}")
             return provider, model_key
 
-def create_model_handler(provider: str, model_key: str):
-    """Create appropriate model handler based on provider"""
+def create_agent_config(provider: str, model_key: str, args) -> dict:
+    """Create configuration dictionary for ResearchAgent"""
+    config = {
+        'max_tokens': args.max_tokens,
+        'temperature': args.temperature,
+        'verbose': args.verbose
+    }
+    
     if provider == "local":
-        return LocalModelHandler(model_key)
+        config['use_api_model'] = False
+        config['model_name'] = model_key
     else:
-        models = get_available_models()
-        model_name = models[provider][model_key]["name"]
-        return APIModelHandler(provider, model_name)
+        config['use_api_model'] = True
+        config['api_provider'] = provider
+        config['model_name'] = model_key
+        
+        # Add API key
+        api_key_var = f"{provider.upper()}_API_KEY"
+        config['api_key'] = os.getenv(api_key_var)
+    
+    return config
 
 def main():
     """Main application entry point"""
@@ -222,44 +235,24 @@ Examples:
     start_time = time.time()
     
     try:
-        # Create model handler
+        # Create agent configuration
         print(f"\n🔧 Initializing {provider.upper()} model handler...")
-        model_handler = create_model_handler(provider, model_key)
+        config = create_agent_config(provider, model_key, args)
         
         # Create research agent
         print("🔬 Setting up research agent...")
-        agent = EnhancedResearchAgent(model_handler, verbose=args.verbose)
+        agent = ResearchAgent(config)  # Fixed: Changed from EnhancedResearchAgent to ResearchAgent
+        
+        # Ensure output directory exists
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         
         # Execute research workflow
         print(f"\n🎯 Starting research for: '{args.query}'")
         print("="*60)
         
-        # Step 1: Search for information
-        search_start = time.time()
-        search_results = agent.search_information(args.query)
-        search_time = time.time() - search_start
-        
-        if args.verbose:
-            print(f"📊 Search completed in {search_time:.1f}s")
-            print(f"📈 Found {len(search_results.split('Source'))-1} sources")
-        
-        # Step 2: Generate report
-        report_start = time.time()
-        report_content = agent.generate_report(
-            topic=args.query,
-            search_results=search_results,
-            max_tokens=args.max_tokens,
-            temperature=args.temperature
-        )
-        report_time = time.time() - report_start
-        
-        if args.verbose:
-            print(f"🤖 Report generated in {report_time:.1f}s")
-        
-        # Step 3: Create PDF
-        pdf_start = time.time()
-        pdf_success = agent.create_pdf_report(report_content, args.output, args.query)
-        pdf_time = time.time() - pdf_start
+        # Run the complete research workflow
+        results = agent.conduct_research(args.query, args.output)
         
         total_time = time.time() - start_time
         
@@ -267,16 +260,17 @@ Examples:
         print("\n" + "="*60)
         print("⏱️  PERFORMANCE SUMMARY")
         print("="*60)
-        print(f"🔍 Search time:        {search_time:.1f}s")
-        print(f"🤖 Generation time:    {report_time:.1f}s")
-        print(f"📄 PDF creation:       {pdf_time:.1f}s")
+        print(f"🔍 Search time:        {results['timing']['search_time']:.1f}s")
+        print(f"🤖 Generation time:    {results['timing']['report_time']:.1f}s")
+        print(f"📄 PDF creation:       {results['timing']['pdf_time']:.1f}s")
         print(f"⚡ Total runtime:      {total_time:.1f}s")
         print(f"🎯 Model used:         {provider.upper()}/{model_key}")
         
-        if pdf_success:
+        if results['pdf_created']:
             output_path = Path(args.output).resolve()
             print(f"\n✅ SUCCESS: Report saved to {output_path}")
-            print(f"📊 File size: {output_path.stat().st_size / 1024:.1f} KB")
+            if output_path.exists():
+                print(f"📊 File size: {output_path.stat().st_size / 1024:.1f} KB")
         else:
             print("\n⚠️  PDF creation had issues")
         
@@ -285,6 +279,7 @@ Examples:
             print("\n" + "="*60)
             print("📝 GENERATED REPORT PREVIEW")
             print("="*60)
+            report_content = results['report_content']
             print(report_content[:500] + "..." if len(report_content) > 500 else report_content)
             print("="*60)
         
@@ -301,8 +296,8 @@ Examples:
         sys.exit(1)
     finally:
         # Cleanup resources
-        if 'model_handler' in locals() and hasattr(model_handler, 'cleanup'):
-            model_handler.cleanup()
+        if 'agent' in locals():
+            agent.cleanup()
 
 if __name__ == "__main__":
     main()
