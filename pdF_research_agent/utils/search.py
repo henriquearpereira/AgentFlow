@@ -7,6 +7,8 @@ import time
 from typing import Dict, List, Any, Optional
 from urllib.parse import quote_plus
 import re
+import os
+from dotenv import load_dotenv
 
 
 class SearchEngine:
@@ -33,8 +35,8 @@ class SearchEngine:
         print(f"🔍 Searching for: {query}")
         
         try:
-            # Use DuckDuckGo search (no API key required)
-            results = self._duckduckgo_search(query, max_results)
+            # Use SERPAI search (API key required - free tier you get 100 searches per month)
+            results = self._serpapi_search(query, max_results)
             
             if not results:
                 print("⚠️ No search results found, using fallback data")
@@ -50,58 +52,37 @@ class SearchEngine:
             print(f"❌ Search error: {e}")
             return self._get_fallback_data(query)
     
-    def _duckduckgo_search(self, query: str, max_results: int) -> List[Dict[str, Any]]:
-        """
-        Search using DuckDuckGo
-        
-        Args:
-            query: Search query
-            max_results: Maximum results to return
-            
-        Returns:
-            List of search result dictionaries
-        """
+    def _serpapi_search(self, query: str, max_results: int) -> List[Dict[str, Any]]:
         try:
-            # DuckDuckGo instant answer API
-            search_url = f"https://api.duckduckgo.com/?q={quote_plus(query)}&format=json&no_html=1&skip_disambig=1"
-            
-            response = self.session.get(search_url, timeout=10)
+            api_key = os.getenv('SERPAI_API_KEY')
+            if not api_key:
+                raise ValueError("Missing SERPAPI_API_KEY in environment")
+
+            url = "https://serpapi.com/search.json"
+            params = {
+                "q": query,
+                "api_key": api_key,
+                "num": max_results,
+                "engine": "google"
+            }
+
+            response = self.session.get(url, params=params, timeout=10)
             response.raise_for_status()
-            
             data = response.json()
+
             results = []
-            
-            # Extract results from different sections
-            if data.get('Results'):
-                for item in data['Results'][:max_results]:
-                    results.append({
-                        'title': item.get('Text', ''),
-                        'url': item.get('FirstURL', ''),
-                        'snippet': item.get('Text', '')
-                    })
-            
-            if data.get('RelatedTopics') and len(results) < max_results:
-                for item in data['RelatedTopics'][:max_results-len(results)]:
-                    if isinstance(item, dict) and 'Text' in item:
-                        results.append({
-                            'title': item.get('Text', '').split(' - ')[0],
-                            'url': item.get('FirstURL', ''),
-                            'snippet': item.get('Text', '')
-                        })
-            
-            # If we still don't have enough results, try the abstract
-            if len(results) < 3 and data.get('Abstract'):
+            for item in data.get("organic_results", [])[:max_results]:
                 results.append({
-                    'title': data.get('Heading', query),
-                    'url': data.get('AbstractURL', ''),
-                    'snippet': data.get('Abstract', '')
+                    "title": item.get("title", ""),
+                    "url": item.get("link", ""),
+                    "snippet": item.get("snippet", "")
                 })
-            
+
             return results
-            
         except Exception as e:
-            print(f"DuckDuckGo search failed: {e}")
+            print(f"SerpAPI search failed: {e}")
             return []
+
     
     def _format_search_results(self, results: List[Dict[str, Any]], query: str) -> str:
         """

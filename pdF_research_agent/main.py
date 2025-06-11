@@ -9,6 +9,8 @@ import sys
 import argparse
 import time
 from pathlib import Path
+import re 
+from datetime import datetime
 from dotenv import load_dotenv
 
 # Add project root to path
@@ -27,6 +29,13 @@ from config.models import get_available_models, list_all_models
 from models.local_models import LocalModelHandler
 from models.api_models import APIModelHandler
 from agents.research_agent import ResearchAgent
+
+def generate_output_filename(query: str) -> str:
+    """Generate descriptive filename from query"""
+    clean_query = re.sub(r'[^\w\s-]', '', query.lower())
+    clean_query = re.sub(r'[-\s]+', '_', clean_query)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    return f"reports/{clean_query}_{timestamp}.pdf"
 
 def display_model_menu():
     """Display comprehensive model selection menu"""
@@ -206,8 +215,8 @@ Examples:
     )
     
     parser.add_argument('query', type=str, help='Research topic or query')
-    parser.add_argument('-o', '--output', type=str, default='reports/research_report.pdf', 
-                       help='Output PDF file path (default: reports/research_report.pdf)')
+    parser.add_argument('-o', '--output', type=str,
+                        help='Output PDF file path (auto-generated if not specified)')
     parser.add_argument('--model-type', choices=['local', 'api', 'interactive'], default='interactive',
                        help='Model type selection (default: interactive)')
     parser.add_argument('--provider', type=str, help='API provider (groq, together, huggingface, openrouter, cohere)')
@@ -224,6 +233,11 @@ Examples:
     print("="*70)
     print(f"📝 Query: {args.query}")
     print(f"📄 Output: {args.output}")
+
+    # Generate filename if not provided
+    if not args.output:
+        args.output = generate_output_filename(args.query)
+        print(f"📄 Auto-generated output: {args.output}")
     
     # Model selection
     if args.model_type == 'interactive' or (not args.provider and not args.model):
