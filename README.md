@@ -7,6 +7,13 @@
 - Report generation with DeepSeek-Coder 6.7B
 - PDF export with ReportLab
 
+## Phase 1 - PDF Report Agent
+
+## Phase 1.5 - PDF Agent Cleanup
+
+## Phase 2 - React Frontend for other users
+
 ## Usage
 ```bash
-python research_agent.py "Your research topic" -o report.pdf
+python main.py "Your research topic" 
+
