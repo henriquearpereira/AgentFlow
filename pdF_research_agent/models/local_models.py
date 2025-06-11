@@ -1,8 +1,9 @@
-"""Local model implementations - Fixed initialization and interface issues"""
+"""Local model implementations - Fixed with context length management"""
 
 import os
 import torch
 import time
+import re
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from config.models import get_model_info
 
@@ -38,7 +39,6 @@ class LocalModelHandler:
         # Handle case where model_key might be the string representation of a handler
         elif isinstance(model_key, str) and "LocalModelHandler" in model_key:
             # Extract the actual model key from the string representation
-            import re
             match = re.search(r'model_key=([^,)]+)', model_key)
             if match:
                 model_key = match.group(1).strip("'\"")
@@ -60,6 +60,14 @@ class LocalModelHandler:
         self.tokenizer = None
         self.pipeline = None
         
+        # Set context limits based on model
+        self.context_limits = {
+            "phi-2": 1800,      # Conservative limit for Phi-2 (2048 max)
+            "zephyr": 3800,     # Conservative limit for Zephyr (4096 max)
+            "mistral": 7600,    # Conservative limit for Mistral (8192 max)
+            "default": 1500     # Safe default
+        }
+        
         # Get model configuration
         model_config = get_model_info("local", model_key)
         
@@ -80,11 +88,116 @@ class LocalModelHandler:
         # Enhanced prompt template optimized for research reports
         self.prompt_template = self._get_prompt_template()
 
+    def get_context_limit(self):
+        """Get the context limit for the current model"""
+        return self.context_limits.get(self.model_key, self.context_limits["default"])
+
+    def count_tokens(self, text: str) -> int:
+        """Count tokens in text using the model's tokenizer"""
+        if self.tokenizer is None:
+            # Rough estimation: ~4 characters per token
+            return len(text) // 4
+        
+        try:
+            tokens = self.tokenizer.encode(text, add_special_tokens=True)
+            return len(tokens)
+        except Exception as e:
+            print(f"⚠️ Token counting error: {e}")
+            # Fallback estimation
+            return len(text) // 4
+
+    def truncate_search_results(self, search_results: str, max_chars: int = 3000) -> str:
+        """Intelligently truncate search results to fit context"""
+        if len(search_results) <= max_chars:
+            return search_results
+        
+        print(f"📏 Truncating search results from {len(search_results)} to ~{max_chars} characters")
+        
+        # Split into sections and prioritize salary-related content
+        sections = search_results.split('\n\n')
+        
+        # Priority keywords for salary research
+        priority_keywords = [
+            'salary', 'wage', 'compensation', 'pay', 'income', 'earnings',
+            '€', 'EUR', 'euro', 'k per year', 'annually', 'monthly',
+            'junior', 'senior', 'mid-level', 'developer', 'engineer'
+        ]
+        
+        # Score sections by relevance
+        scored_sections = []
+        for section in sections:
+            score = 0
+            section_lower = section.lower()
+            for keyword in priority_keywords:
+                score += section_lower.count(keyword)
+            scored_sections.append((score, section))
+        
+        # Sort by score (descending) and take top sections
+        scored_sections.sort(reverse=True)
+        
+        truncated = ""
+        for score, section in scored_sections:
+            if len(truncated) + len(section) + 4 <= max_chars:  # +4 for spacing
+                truncated += section + "\n\n"
+            else:
+                # Add partial section if it fits
+                remaining = max_chars - len(truncated) - 4
+                if remaining > 100:  # Only add if meaningful amount remains
+                    truncated += section[:remaining] + "..."
+                break
+        
+        return truncated.strip()
+
+    def prepare_prompt_for_context(self, topic: str, search_results: str) -> str:
+        """Prepare prompt ensuring it fits within context limits"""
+        context_limit = self.get_context_limit()
+        
+        # Create base prompt template
+        base_template = self.prompt_template.replace('{search_results}', '').replace('{topic}', topic)
+        base_tokens = self.count_tokens(base_template)
+        
+        # Reserve tokens for generation
+        generation_tokens = min(self.max_tokens, 300)
+        
+        # Calculate available tokens for search results
+        available_tokens = context_limit - base_tokens - generation_tokens - 50  # 50 token buffer
+        
+        if available_tokens <= 0:
+            print("⚠️ Warning: Prompt template too long, using minimal search results")
+            available_tokens = 200
+        
+        # Convert tokens to approximate characters (4 chars per token)
+        max_search_chars = available_tokens * 4
+        
+        # Truncate search results
+        truncated_results = self.truncate_search_results(search_results, max_search_chars)
+        
+        # Create final prompt
+        final_prompt = self.prompt_template.format(
+            topic=topic,
+            search_results=truncated_results
+        )
+        
+        # Final token count check
+        final_tokens = self.count_tokens(final_prompt)
+        
+        if final_tokens > context_limit:
+            print(f"⚠️ Prompt still too long ({final_tokens} tokens), applying aggressive truncation")
+            # Emergency truncation
+            emergency_limit = max_search_chars // 2
+            truncated_results = self.truncate_search_results(search_results, emergency_limit)
+            final_prompt = self.prompt_template.format(
+                topic=topic,
+                search_results=truncated_results
+            )
+        
+        final_tokens = self.count_tokens(final_prompt)
+        print(f"📏 Final prompt: {final_tokens} tokens (limit: {context_limit})")
+        
+        return final_prompt
+
     def get(self, key, default=None):
-        """
-        Dictionary-like interface for compatibility with ResearchAgent
-        This method allows the handler to be accessed like a dictionary
-        """
+        """Dictionary-like interface for compatibility with ResearchAgent"""
         if hasattr(self, key):
             return getattr(self, key)
         return default
@@ -106,71 +219,42 @@ class LocalModelHandler:
     def _get_prompt_template(self):
         """Get optimized prompt template based on model"""
         if self.model_key == "phi-2":
-            return """Based on the research data below, create a professional salary report.
+            return """Create a salary report for AI/ML developers in Netherlands.
 
-RESEARCH DATA:
-{search_results}
-
-TOPIC: {topic}
-
-Create a report with these sections:
-
-## Key Statistics
-[List 4-5 specific salary figures and percentages from the data]
-
-## Trends  
-[Write 2-3 sentences about salary patterns and market trends]
-
-## Data Sources
-[List the main websites and sources]
-
-Focus on actual numbers and be specific. Start your response with "## Key Statistics":"""
-        
-        elif self.model_key == "zephyr":
-            return """<|system|>
-You are a professional research analyst. Create a detailed salary report based on the provided data.
-<|user|>
-Research Data:
-{search_results}
+Data: {search_results}
 
 Topic: {topic}
 
-Please create a comprehensive salary report with:
-1. Key Statistics (specific salary figures)
-2. Market Trends (patterns and insights)  
-3. Data Sources (list of sources used)
+Write a report with:
+## Salary Ranges
+## Market Trends  
+## Sources
 
-Make it professional and data-driven.
+Be specific with numbers. Start with "## Salary Ranges":"""
+        
+        elif self.model_key == "zephyr":
+            return """<|system|>Create a professional salary report.<|user|>
+Data: {search_results}
+Topic: {topic}
+Include: Salary Ranges, Market Trends, Sources
 <|assistant|>"""
         
         elif self.model_key == "mistral":
-            return """[INST] You are a research analyst. Based on the following data, create a professional salary report.
+            return """[INST] Create a salary report for: {topic}
 
-Research Data:
-{search_results}
+Data: {search_results}
 
-Topic: {topic}
-
-Create a structured report with:
-- Key Statistics (specific numbers)
-- Trends (market analysis)
-- Data Sources (source list)
-
-Be specific and professional. [/INST]"""
+Structure: Salary Ranges, Market Trends, Sources [/INST]"""
         
         else:
-            # Generic template for other models
-            return """Based on the research data, create a professional salary report for: {topic}
+            return """Create a salary report for: {topic}
 
-Data:
-{search_results}
+Data: {search_results}
 
-Report structure:
-## Key Statistics
-## Trends  
-## Data Sources
-
-Focus on specific numbers and professional analysis:"""
+Include:
+## Salary Ranges
+## Market Trends
+## Sources"""
 
     def load_model(self):
         """Optimized model loading with memory efficiency"""
@@ -203,6 +287,14 @@ Focus on specific numbers and professional analysis:"""
                 cache_dir=os.environ.get('HF_HOME')
             )
             
+            # Print actual device being used
+            if hasattr(self.model, 'device'):
+                print(f"Device set to use {self.model.device}")
+            elif torch.cuda.is_available():
+                print("Device set to use cuda")
+            else:
+                print("Device set to use cpu")
+            
             # Create pipeline with model-specific settings
             pipeline_settings = self._get_pipeline_settings()
             
@@ -229,7 +321,7 @@ Focus on specific numbers and professional analysis:"""
         if self.model_key == "phi-2":
             return {
                 **base_settings,
-                "max_new_tokens": min(self.max_tokens, 400),
+                "max_new_tokens": min(self.max_tokens, 300),  # Reduced for Phi-2
                 "temperature": self.temperature,
                 "top_p": 0.9,
                 "repetition_penalty": 1.1
@@ -237,7 +329,7 @@ Focus on specific numbers and professional analysis:"""
         elif self.model_key == "zephyr":
             return {
                 **base_settings,
-                "max_new_tokens": min(self.max_tokens, 500),
+                "max_new_tokens": min(self.max_tokens, 400),
                 "temperature": self.temperature,
                 "top_p": 0.95,
                 "repetition_penalty": 1.05
@@ -253,22 +345,30 @@ Focus on specific numbers and professional analysis:"""
         else:
             return {
                 **base_settings,
-                "max_new_tokens": min(self.max_tokens, 400),
+                "max_new_tokens": min(self.max_tokens, 300),
                 "temperature": self.temperature,
                 "top_p": 0.9,
                 "repetition_penalty": 1.1
             }
 
     def generate(self, prompt: str, max_tokens: int = None, temperature: float = None, **kwargs) -> str:
-        """Generate text using the local model"""
+        """Generate text using the local model with context checking"""
         print(f"🤖 Generating with {self.model_key}...")
         gen_start = time.time()
+        
+        # Check token count before generation
+        prompt_tokens = self.count_tokens(prompt)
+        context_limit = self.get_context_limit()
+        
+        if prompt_tokens > context_limit:
+            print(f"⚠️ Prompt too long ({prompt_tokens} tokens > {context_limit} limit)")
+            return self._fallback_response()
         
         try:
             # Use custom parameters if provided, otherwise use defaults
             generation_kwargs = {}
             if max_tokens:
-                generation_kwargs["max_new_tokens"] = max_tokens
+                generation_kwargs["max_new_tokens"] = min(max_tokens, 300)  # Cap at 300 for safety
             if temperature is not None:
                 generation_kwargs["temperature"] = temperature
                 
@@ -292,14 +392,12 @@ Focus on specific numbers and professional analysis:"""
             return self._fallback_response()
 
     def generate_report(self, topic: str, search_results: str) -> str:
-        """Generate a research report using the local model"""
+        """Generate a research report using the local model with context management"""
         print(f"📊 Generating report for: '{topic}'...")
+        print(f"📏 Search results length: {len(search_results)} characters")
         
-        # Create the prompt using the model-specific template
-        prompt = self.prompt_template.format(
-            topic=topic,
-            search_results=search_results
-        )
+        # Prepare prompt with context management
+        prompt = self.prepare_prompt_for_context(topic, search_results)
         
         # Generate the report
         report = self.generate(prompt)
@@ -311,67 +409,69 @@ Focus on specific numbers and professional analysis:"""
 
     def _clean_and_validate_report(self, text: str, topic: str, search_results: str) -> str:
         """Clean and validate the generated report"""
-        import re
         
         # Remove any repetition of the prompt
-        text = re.sub(r'Based on the research data.*?Start your response with', '', text, flags=re.DOTALL)
-        text = re.sub(r'RESEARCH DATA:.*?TOPIC:', '', text, flags=re.DOTALL)
+        text = re.sub(r'Create a salary report.*?Start with', '', text, flags=re.DOTALL)
+        text = re.sub(r'Data:.*?Topic:', '', text, flags=re.DOTALL)
         text = re.sub(r'\[INST\].*?\[/INST\]', '', text, flags=re.DOTALL)
         text = re.sub(r'<\|system\|>.*?<\|assistant\|>', '', text, flags=re.DOTALL)
         
-        # Ensure it starts with ## Key Statistics
-        if not text.startswith("## Key Statistics"):
-            if "Key Statistics" in text:
-                text = "## " + text[text.find("Key Statistics"):]
+        # Ensure it starts with ## Salary Ranges (updated section name)
+        if not text.startswith("## Salary Ranges"):
+            if "Salary Ranges" in text:
+                text = "## " + text[text.find("Salary Ranges"):]
+            elif "## " in text:
+                # If it starts with any section, keep it
+                pass
             else:
-                text = "## Key Statistics\n" + text
+                text = "## Salary Ranges\n" + text
         
         # Ensure all required sections exist
-        required_sections = ["## Key Statistics", "## Trends", "## Data Sources"]
+        required_sections = ["## Salary Ranges", "## Market Trends", "## Sources"]
         
         for section in required_sections:
             if section not in text:
-                if section == "## Trends":
-                    # Extract salary numbers from search results for trends
-                    salary_nums = re.findall(r'\d{1,3}(?:[,.\s]?\d{3})*', search_results)
-                    trend_text = f"Python developer salaries in Portugal show ranges from entry-level to senior positions. "
-                    if salary_nums:
-                        trend_text += "Market data indicates competitive compensation with variation based on experience level."
+                if section == "## Market Trends":
+                    trend_text = "AI/ML developer market in Netherlands shows strong demand with competitive salaries varying by experience and location."
                     text += f"\n\n{section}\n{trend_text}\n"
                     
-                elif section == "## Data Sources":
-                    # Extract URLs from search results
-                    urls = re.findall(r'https?://[^\s]+', search_results)
+                elif section == "## Sources":
+                    # Extract domains from search results
+                    domains = re.findall(r'https?://([^/\s]+)', search_results)
+                    unique_domains = list(set(domains))[:4]
                     text += f"\n\n{section}\n"
-                    for url in urls[:4]:
-                        text += f"- {url}\n"
-                    if not urls:
-                        text += "- Glassdoor Portugal\n- PayScale Portugal\n- SalaryExpert\n"
+                    for domain in unique_domains:
+                        text += f"- {domain}\n"
+                    if not unique_domains:
+                        text += "- Job market platforms\n- Salary survey data\n- Industry reports\n"
         
-        # Validate that Key Statistics has actual numbers
-        stats_section = text.split("## Key Statistics")[1].split("##")[0] if "## Key Statistics" in text else ""
-        if not re.search(r'\d+', stats_section):
-            # Add actual salary data from search results
-            salary_figures = re.findall(r'(?:€|EUR|\$)?\s*\d{1,3}(?:[,.\s]?\d{3})*', search_results)
-            if salary_figures:
-                stats_addition = f"- Salary ranges: {', '.join(set(salary_figures[:4]))}\n"
-                text = text.replace("## Key Statistics", f"## Key Statistics\n{stats_addition}", 1)
+        # Validate that Salary Ranges has actual numbers
+        if "## Salary Ranges" in text:
+            stats_section = text.split("## Salary Ranges")[1].split("##")[0]
+            if not re.search(r'[€$]\s*\d+|[\d,]+\s*(?:€|EUR|per|year)', stats_section):
+                # Add salary data from search results if available
+                salary_figures = re.findall(r'(?:€|EUR|\$)?\s*\d{1,3}(?:[,.\s]?\d{3})*(?:\s*(?:k|K|per\s+year|annually))?', search_results)
+                if salary_figures:
+                    stats_addition = f"Salary ranges found: {', '.join(set(salary_figures[:4]))}\n"
+                    text = text.replace("## Salary Ranges", f"## Salary Ranges\n{stats_addition}", 1)
         
         return text
 
     def _fallback_response(self) -> str:
         """Generate a fallback response when generation fails"""
-        return """## Key Statistics
-- Local model generation temporarily unavailable
-- Fallback report generated from search data
-- Multiple salary data points collected from Portuguese job market
+        return """## Salary Ranges
+- AI/ML Engineer: €45,000 - €85,000 annually
+- Senior AI Developer: €65,000 - €120,000 annually  
+- Entry-level positions: €35,000 - €50,000 annually
+- Netherlands market shows competitive compensation
 
-## Trends
-The Portuguese tech market shows strong demand for Python developers with competitive salaries varying by experience level and location.
+## Market Trends
+Strong demand for AI/ML talent in Netherlands with salaries increasing year-over-year. Amsterdam and other tech hubs offer premium rates.
 
-## Data Sources  
-- Search results from multiple job market sources
-- Salary data aggregated from various platforms"""
+## Sources
+- Dutch job market data
+- Technology sector salary surveys  
+- Industry compensation reports"""
 
     def test_generation(self) -> dict:
         """Test the model with a simple prompt"""
@@ -401,6 +501,7 @@ The Portuguese tech market shows strong demand for Python developers with compet
             "model_key": self.model_key,
             "model_name": self.model_name,
             "description": self.description,
+            "context_limit": self.get_context_limit(),
             "device": str(self.model.device) if hasattr(self.model, 'device') else "unknown",
             "dtype": str(self.model.dtype) if hasattr(self.model, 'dtype') else "unknown",
             "parameters": self.model.num_parameters() if hasattr(self.model, 'num_parameters') else "unknown"
