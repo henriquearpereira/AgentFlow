@@ -130,7 +130,7 @@ def generate_output_filename(query: str) -> str:
     clean_query = re.sub(r'[^\w\s-]', '', query.lower())
     clean_query = re.sub(r'[-\s]+', '_', clean_query)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    return f"reports/{clean_query}_{timestamp}.pdf"
+    return f"{clean_query}_{timestamp}.pdf"
 
 def detect_query_type(query: str) -> Dict[str, Any]:
     """Detect query type and suggest refinements"""
@@ -394,10 +394,18 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
         
         agent.set_progress_callback(progress_callback)
         
-        # Generate output filename
-        output_filename = request.output_filename or generate_output_filename(request.query)
-        output_path = Path(output_filename)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Generate output filename - FIXED: Use just the filename without directory
+        if request.output_filename:
+            output_filename = request.output_filename
+        else:
+            output_filename = generate_output_filename(request.query)
+        
+        # Ensure reports directory exists
+        reports_dir = Path("reports")
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Full path for the research agent
+        output_path = reports_dir / output_filename
         
         await progress_tracker.update("Starting research process...", 30)
         
@@ -415,9 +423,10 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
         active_sessions[session_id]["status"] = "completed"
         active_sessions[session_id]["results"] = results
         
+        # FIXED: Return just the filename for download
         return {
             "success": True,
-            "report_path": str(output_path),
+            "report_path": output_filename,  # Just the filename, not the full path
             "categories": results.get("categories", []),
             "report_structure": results.get("report_structure", []),
             "timing": results.get("timing", {}),
@@ -442,20 +451,41 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
 
 @app.get("/api/reports/{filename}")
 async def download_report(filename: str):
-    """Download a generated report"""
+    """Download a generated report - FIXED: Proper file path handling"""
     try:
+        # FIXED: Look for the file in the reports directory
         file_path = Path("reports") / filename
         
+        # Also check if the filename already includes the reports directory
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail="Report not found")
+            # Try to extract just the filename if it includes directory
+            clean_filename = Path(filename).name
+            file_path = Path("reports") / clean_filename
+        
+        print(f"🔍 Looking for file: {file_path}")
+        print(f"📁 File exists: {file_path.exists()}")
+        
+        if not file_path.exists():
+            # List available files for debugging
+            reports_dir = Path("reports")
+            if reports_dir.exists():
+                available_files = list(reports_dir.glob("*.pdf"))
+                print(f"📄 Available files: {[f.name for f in available_files]}")
+            
+            raise HTTPException(status_code=404, detail=f"Report not found: {filename}")
+        
+        print(f"✅ Serving file: {file_path}")
         
         return FileResponse(
             path=str(file_path),
-            filename=filename,
+            filename=file_path.name,
             media_type='application/pdf'
         )
         
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
     except Exception as e:
+        print(f"❌ Error serving file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/sessions/{session_id}/status")
@@ -494,6 +524,27 @@ async def health_check():
         "websocket_connections": len(manager.active_connections)
     }
 
+# ADDED: List available reports endpoint for debugging
+@app.get("/api/reports")
+async def list_reports():
+    """List all available reports"""
+    try:
+        reports_dir = Path("reports")
+        if not reports_dir.exists():
+            return {"reports": []}
+        
+        reports = []
+        for file_path in reports_dir.glob("*.pdf"):
+            reports.append({
+                "filename": file_path.name,
+                "size": file_path.stat().st_size,
+                "created": datetime.fromtimestamp(file_path.stat().st_ctime).isoformat()
+            })
+        
+        return {"reports": reports}
+    except Exception as e:
+        return {"error": str(e), "reports": []}
+
 # Serve static files (for potential frontend)
 if Path("frontend/build").exists():
     app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
@@ -523,6 +574,7 @@ if __name__ == "__main__":
     print("🔍 Interactive API: http://localhost:8000/redoc")
     print("💻 Health Check: http://localhost:8000/api/health")
     print("🌐 WebSocket: ws://localhost:8000/ws/{session_id}")
+    print("📄 Reports List: http://localhost:8000/api/reports")
     print("=" * 50)
     
     uvicorn.run(

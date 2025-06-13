@@ -3,53 +3,35 @@ echo ==========================================
 echo   AI Research Agent - Development Server
 echo ==========================================
 
-:: Set the base directory
-set "BASE_DIR=D:\code\AgentFlow"
+cd /d "D:\code\AgentFlow"
+echo Current directory: %cd%
 
-:: Function to start backend
-:start_backend
 echo Starting Python Backend...
-cd /d "%BASE_DIR%\pdF_research_agent"
-if not exist "venv" (
-    echo ERROR: Virtual environment not found. Please run setup-complete.bat first.
-    pause
-    exit /b 1
-)
+start "Backend" cmd /k "cd /d D:\code\AgentFlow\pdF_research_agent && D:\code\AgentFlow\venv\Scripts\activate.bat && python main.py"
 
-:: Start backend in a new window
-start "AI Research Agent - Backend" cmd /k "venv\Scripts\activate.bat && python main.py"
+echo Waiting for backend to start...
+timeout /t 5 /nobreak >nul
 
-:: Wait a moment for backend to start
-timeout /t 3 /nobreak >nul
-
-:: Function to start frontend
-:start_frontend
-echo Starting React Frontend...
-cd /d "%BASE_DIR%\frontend"
+echo Checking frontend dependencies...
+cd /d "D:\code\AgentFlow\frontend"
 if not exist "node_modules" (
-    echo ERROR: Node modules not found. Please run setup-complete.bat first.
-    pause
-    exit /b 1
+    echo Installing frontend dependencies...
+    npm install
 )
 
-:: Start frontend in a new window
-start "AI Research Agent - Frontend" cmd /k "npm start"
+echo Starting React Frontend...
+start "Frontend" cmd /k "cd /d D:\code\AgentFlow\frontend && npm start"
 
 echo.
 echo ==========================================
-echo   Development Servers Started!
+echo   Servers Started!
 echo ==========================================
 echo.
-echo Backend (API):      http://localhost:8000
-echo API Documentation: http://localhost:8000/docs
-echo Frontend (React):  http://localhost:3000
+echo Backend: http://localhost:8000
+echo Frontend: http://localhost:3000
+echo API Docs: http://localhost:8000/docs
 echo.
 echo Both servers are running in separate windows.
-echo Close those windows to stop the servers.
-echo.
-echo The React app should automatically open in your browser.
-echo If not, navigate to: http://localhost:3000
-echo.
 echo ==========================================
 
 pause
