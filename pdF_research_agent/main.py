@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
 """
-AI Research Agent - Enhanced Main Entry Point
-With interactive query refinement and improved user experience
+AI Research Agent - FastAPI Backend
+Converted from CLI to web API with WebSocket support
 """
 
 import os
 import sys
-import argparse
+import asyncio
+import json
 import time
+import uuid
 from pathlib import Path
-import re 
+import re
 from datetime import datetime
+from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
+
+# FastAPI imports
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
 # Add project root to path
 project_root = Path(__file__).parent
@@ -30,422 +40,548 @@ from models.local_models import LocalModelHandler
 from models.api_models import APIModelHandler
 from agents.research_agent import EnhancedResearchAgent
 
+# Initialize FastAPI app
+app = FastAPI(
+    title="AI Research Agent API",
+    description="Professional AI-powered research report generation with multiple model support",
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# CORS middleware for frontend communication
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # React dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Pydantic models for API requests/responses
+class QueryRefinementRequest(BaseModel):
+    query: str
+    scope: Optional[str] = "comprehensive"
+    region: Optional[str] = "global"
+    timeframe: Optional[str] = "current"
+    audience: Optional[str] = "general"
+    depth: Optional[str] = "detailed"
+    focus_areas: Optional[str] = ""
+
+class ResearchRequest(BaseModel):
+    query: str
+    provider: str
+    model_key: str
+    max_tokens: Optional[int] = 500
+    temperature: Optional[float] = 0.2
+    output_filename: Optional[str] = None
+    refinements: Optional[Dict[str, Any]] = None
+
+class ModelTestRequest(BaseModel):
+    provider: str
+    model_key: str
+
+class ResearchProgress(BaseModel):
+    session_id: str
+    stage: str
+    progress: int
+    message: str
+    elapsed_time: float
+    estimated_remaining: Optional[float] = None
+
+class ResearchResult(BaseModel):
+    success: bool
+    report_path: Optional[str] = None
+    categories: List[str] = []
+    report_structure: List[str] = []
+    timing: Dict[str, float] = {}
+    error: Optional[str] = None
+    content_length: int = 0
+    pdf_created: bool = False
+
+# Global state management
+active_sessions: Dict[str, Dict] = {}
+connection_manager = {}
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+
+    async def connect(self, websocket: WebSocket, session_id: str):
+        await websocket.accept()
+        self.active_connections[session_id] = websocket
+
+    def disconnect(self, session_id: str):
+        if session_id in self.active_connections:
+            del self.active_connections[session_id]
+
+    async def send_progress(self, session_id: str, data: dict):
+        if session_id in self.active_connections:
+            try:
+                await self.active_connections[session_id].send_json(data)
+            except:
+                # Connection might be closed
+                self.disconnect(session_id)
+
+manager = ConnectionManager()
+
 def generate_output_filename(query: str) -> str:
     """Generate descriptive filename from query"""
     clean_query = re.sub(r'[^\w\s-]', '', query.lower())
     clean_query = re.sub(r'[-\s]+', '_', clean_query)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    return f"reports/{clean_query}_{timestamp}.pdf"
+    return f"{clean_query}_{timestamp}.pdf"
 
-def refine_query_interactive(initial_query: str) -> dict:
-    """Interactive query refinement to improve research quality"""
-    print("\n" + "="*70)
-    print("🎯 QUERY REFINEMENT - Let's optimize your research!")
-    print("="*70)
-    
-    print(f"📝 Your query: {initial_query}")
-    
-    # Detect query type for targeted questions
-    query_lower = initial_query.lower()
-    refinements = {
-        'query': initial_query,
-        'scope': 'comprehensive',
-        'region': 'global',
-        'timeframe': 'current',
-        'audience': 'general',
-        'depth': 'detailed'
+def detect_query_type(query: str) -> Dict[str, Any]:
+    """Detect query type and suggest refinements"""
+    query_lower = query.lower()
+    suggestions = {
+        'type': 'general',
+        'suggestions': []
     }
     
-    # Ask clarifying questions based on query type
     if any(word in query_lower for word in ['salary', 'pay', 'wage', 'compensation']):
-        print("\n💰 Detected: Salary Research")
-        refinements['scope'] = input("🌍 Geographic focus (e.g., 'Portugal', 'Europe', 'Global'): ").strip() or 'Global'
-        refinements['timeframe'] = input("📅 Time focus (e.g., '2024', 'latest', 'trends'): ").strip() or 'latest'
-        
-        experience = input("👨‍💻 Experience level focus (e.g., 'junior', 'senior', 'all levels'): ").strip()
-        if experience:
-            refinements['query'] += f" {experience} level"
-            
+        suggestions['type'] = 'salary'
+        suggestions['suggestions'] = [
+            {'field': 'region', 'label': 'Geographic Focus', 'placeholder': 'Portugal, Europe, Global'},
+            {'field': 'timeframe', 'label': 'Time Focus', 'placeholder': '2024, latest, trends'},
+            {'field': 'experience', 'label': 'Experience Level', 'placeholder': 'junior, senior, all levels'}
+        ]
     elif any(word in query_lower for word in ['vs', 'versus', 'compare', 'comparison']):
-        print("\n⚖️ Detected: Comparison Research")
-        criteria = input("📊 Key comparison criteria (e.g., 'features', 'pricing', 'performance'): ").strip()
-        if criteria:
-            refinements['query'] += f" {criteria} comparison"
-            
+        suggestions['type'] = 'comparison'
+        suggestions['suggestions'] = [
+            {'field': 'criteria', 'label': 'Comparison Criteria', 'placeholder': 'features, pricing, performance'}
+        ]
     elif any(word in query_lower for word in ['how to', 'guide', 'tutorial']):
-        print("\n📚 Detected: Tutorial/Guide Research")
-        level = input("🎓 Target skill level (e.g., 'beginner', 'intermediate', 'advanced'): ").strip()
-        if level:
-            refinements['query'] += f" {level} guide"
-            
-    else:
-        print("\n🔍 General Research Query")
-        
-    # Common refinement options
-    print(f"\n📋 Current refined query: {refinements['query']}")
+        suggestions['type'] = 'tutorial'
+        suggestions['suggestions'] = [
+            {'field': 'level', 'label': 'Skill Level', 'placeholder': 'beginner, intermediate, advanced'}
+        ]
     
-    depth_choice = input("📖 Report depth (1=Summary, 2=Detailed, 3=Comprehensive): ").strip()
-    depth_map = {'1': 'summary', '2': 'detailed', '3': 'comprehensive'}
-    refinements['depth'] = depth_map.get(depth_choice, 'detailed')
-    
-    # Ask about specific focus areas
-    print("\n🎯 Any specific focus areas? (comma-separated, or press Enter to skip)")
-    focus_areas = input("   Examples: remote work, startups, trends, benefits: ").strip()
-    if focus_areas:
-        refinements['query'] += f" {focus_areas}"
-    
-    # Confirm final query
-    print(f"\n✅ Final refined query: {refinements['query']}")
-    confirm = input("👍 Proceed with this query? (y/N): ").strip().lower()
-    
-    if confirm not in ['y', 'yes']:
-        manual_query = input("✏️  Enter your preferred query: ").strip()
-        if manual_query:
-            refinements['query'] = manual_query
-    
-    return refinements
+    return suggestions
 
 class ProgressTracker:
-    """Enhanced progress tracking with visual feedback"""
+    """Progress tracker with WebSocket support"""
     
-    def __init__(self):
+    def __init__(self, session_id: str):
+        self.session_id = session_id
         self.start_time = time.time()
-        self.last_update = 0
     
-    def update(self, message: str, percentage: int):
-        """Update progress with enhanced visual feedback"""
+    async def update(self, message: str, percentage: int):
+        """Send progress update via WebSocket"""
         current_time = time.time()
         elapsed = current_time - self.start_time
         
-        # Create progress bar
-        bar_length = 30
-        filled_length = int(bar_length * percentage // 100)
-        bar = '█' * filled_length + '░' * (bar_length - filled_length)
-        
         # Estimate remaining time
+        remaining = None
         if percentage > 0:
             total_estimated = elapsed * 100 / percentage
             remaining = max(0, total_estimated - elapsed)
-            time_info = f"⏱️  {elapsed:.1f}s elapsed, ~{remaining:.1f}s remaining"
-        else:
-            time_info = f"⏱️  {elapsed:.1f}s elapsed"
         
-        print(f"\r🔄 [{bar}] {percentage:3d}% | {message} | {time_info}", end='', flush=True)
+        progress_data = {
+            'type': 'progress',
+            'session_id': self.session_id,
+            'stage': message,
+            'progress': percentage,
+            'elapsed_time': elapsed,
+            'estimated_remaining': remaining
+        }
         
-        if percentage >= 100:
-            print()  # New line when complete
-        
-        self.last_update = current_time
+        await manager.send_progress(self.session_id, progress_data)
 
-def display_model_menu():
-    """Display comprehensive model selection menu"""
-    print("\n" + "="*70)
-    print("🤖 AI RESEARCH AGENT - MODEL SELECTION")
-    print("="*70)
-    
-    models = get_available_models()
-    option_num = 1
-    model_options = {}
-    
-    # Local Models
-    print(f"\n📱 LOCAL MODELS (No API key required)")
-    print("-" * 50)
-    for model_key, model_info in models["local"].items():
-        print(f"{option_num}. {model_info['description']}")
-        print(f"   ⏱️  Time: {model_info['estimated_time']} | 💾 Memory: {model_info['memory_usage']} | ⭐ Quality: {model_info['quality']}")
-        model_options[str(option_num)] = ("local", model_key)
-        option_num += 1
-    
-    # API Models
-    api_providers = ["groq", "together", "huggingface", "openrouter", "cohere"]
-    
-    for provider in api_providers:
-        if provider in models:
-            provider_name = provider.upper()
-            print(f"\n🌐 {provider_name} API MODELS")
-            print("-" * 50)
-            
-            for model_key, model_info in models[provider].items():
-                # Check if API key is available
+# API Endpoints
+
+@app.get("/")
+async def root():
+    """Root endpoint with API information"""
+    return {
+        "message": "AI Research Agent API",
+        "version": "2.0.0",
+        "endpoints": {
+            "models": "/api/models",
+            "research": "/api/research",
+            "websocket": "/ws/{session_id}",
+            "docs": "/docs"
+        }
+    }
+
+@app.get("/api/models")
+async def get_models():
+    """Get all available models with their configurations"""
+    try:
+        models = get_available_models()
+        
+        # Add API key status for each provider
+        for provider in models:
+            if provider != "local":
                 api_key_var = f"{provider.upper()}_API_KEY"
                 has_key = bool(os.getenv(api_key_var))
-                key_status = "✅" if has_key else "❌"
                 
-                print(f"{option_num}. {model_info['description']} {key_status}")
-                print(f"   ⏱️  Time: {model_info['estimated_time']} | 💰 Cost: {model_info['cost']} | ⭐ Quality: {model_info['quality']}")
-                
-                if not has_key:
-                    print(f"   ⚠️  Requires {api_key_var} in .env file")
-                
-                model_options[str(option_num)] = (provider, model_key)
-                option_num += 1
-    
-    print(f"\n{option_num}. 🧪 Test API Connections")
-    model_options[str(option_num)] = ("test", "connections")
-    option_num += 1
-    
-    print(f"{option_num}. ❌ Exit")
-    model_options[str(option_num)] = ("exit", "")
-    
-    return model_options
+                for model_key in models[provider]:
+                    models[provider][model_key]["api_key_available"] = has_key
+        
+        return {
+            "success": True,
+            "models": models
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-def test_api_connections():
-    """Test all available API connections"""
-    print("\n🧪 Testing API Connections...")
-    print("="*50)
-    
-    models = get_available_models()
-    results = []
-    
-    for provider in ["groq", "together", "huggingface", "openrouter", "cohere"]:
-        if provider not in models:
-            continue
-            
-        api_key_var = f"{provider.upper()}_API_KEY"
-        if not os.getenv(api_key_var):
-            print(f"❌ {provider.upper()}: No API key found ({api_key_var})")
-            continue
-        
-        print(f"🔄 Testing {provider.upper()}...")
-        
-        # Test first available model for each provider
-        first_model = list(models[provider].keys())[0]
-        model_name = models[provider][first_model]["name"]
-        
-        try:
-            handler = APIModelHandler(provider, model_name)
-            result = handler.test_connection()
-            
-            if result["status"] == "success":
-                print(f"✅ {provider.upper()}: Connection successful")
-                results.append((provider, first_model, True))
-            else:
-                print(f"❌ {provider.upper()}: {result['error']}")
-                results.append((provider, first_model, False))
-                
-        except Exception as e:
-            print(f"❌ {provider.upper()}: {str(e)}")
-            results.append((provider, first_model, False))
-    
-    print("\n📊 Connection Test Summary:")
-    print("-" * 30)
-    working_apis = [r for r in results if r[2]]
-    print(f"✅ Working APIs: {len(working_apis)}")
-    print(f"❌ Failed APIs: {len(results) - len(working_apis)}")
-    
-    if working_apis:
-        print("\n🎉 Recommended API models:")
-        for provider, model, _ in working_apis:
-            model_info = models[provider][model]
-            print(f"  • {provider}/{model}: {model_info['description']}")
-    
-    input("\nPress Enter to continue...")
-
-def select_model_interactive():
-    """Interactive model selection with enhanced options"""
-    while True:
-        model_options = display_model_menu()
-        
-        choice = input(f"\n🎯 Choose your model (1-{len(model_options)}): ").strip()
-        
-        if choice not in model_options:
-            print("❌ Invalid choice. Please try again.")
-            continue
-        
-        provider, model_key = model_options[choice]
-        
-        if provider == "exit":
-            print("👋 Goodbye!")
-            sys.exit(0)
-        elif provider == "test":
-            test_api_connections()
-            continue
-        elif provider == "local":
-            print(f"✅ Selected: Local {model_key}")
-            return provider, model_key
-        else:
-            # API model selected
-            api_key_var = f"{provider.upper()}_API_KEY"
-            if not os.getenv(api_key_var):
-                print(f"❌ Error: {api_key_var} not found in .env file")
-                print(f"💡 Please add your {provider.upper()} API key to .env and restart")
-                continue
-            
-            print(f"✅ Selected: {provider.upper()} {model_key}")
-            return provider, model_key
-
-def main():
-    """Enhanced main application entry point"""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(
-        description='Enhanced AI Research Agent with Interactive Features',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python main.py "Python developer salaries Portugal"
-  python main.py "Machine learning engineer salaries Lisbon" -o reports/ml_salaries.pdf
-  python main.py "Data scientist remote work Portugal" --model-type api --provider groq
-  python main.py "Docker vs Kubernetes comparison" --interactive
-        """
-    )
-    
-    parser.add_argument('query', type=str, help='Research topic or query')
-    parser.add_argument('-o', '--output', type=str,
-                        help='Output PDF file path (auto-generated if not specified)')
-    parser.add_argument('--model-type', choices=['local', 'api', 'interactive'], default='interactive',
-                       help='Model type selection (default: interactive)')
-    parser.add_argument('--provider', type=str, help='API provider (groq, together, huggingface, openrouter, cohere)')
-    parser.add_argument('--model', type=str, help='Specific model key to use')
-    parser.add_argument('--max-tokens', type=int, default=500, help='Maximum tokens for generation')
-    parser.add_argument('--temperature', type=float, default=0.2, help='Generation temperature')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
-    parser.add_argument('--interactive', action='store_true', help='Enable interactive query refinement')
-    parser.add_argument('--no-refinement', action='store_true', help='Skip query refinement')
-    
-    args = parser.parse_args()
-    
-    # Display startup banner
-    print("\n" + "="*70)
-    print("🚀 ENHANCED AI RESEARCH AGENT - PROFESSIONAL REPORT GENERATOR")
-    print("="*70)
-    
-    # Interactive query refinement (unless disabled)
-    final_query = args.query
-    if not args.no_refinement and (args.interactive or not any([args.provider, args.model])):
-        refinement_data = refine_query_interactive(args.query)
-        final_query = refinement_data['query']
-    
-    print(f"📝 Final Query: {final_query}")
-    
-    # Generate filename if not provided
-    if not args.output:
-        args.output = generate_output_filename(final_query)
-        print(f"📄 Auto-generated output: {args.output}")
-    else:
-        print(f"📄 Output file: {args.output}")
-    
-    # Model selection
-    if args.model_type == 'interactive' or (not args.provider and not args.model):
-        provider, model_key = select_model_interactive()
-    else:
-        if args.provider and args.model:
-            provider, model_key = args.provider, args.model
-        else:
-            print("❌ Error: For non-interactive mode, both --provider and --model must be specified")
-            sys.exit(1)
-    
-    # Initialize application
-    start_time = time.time()
-    progress_tracker = ProgressTracker()
-    
+@app.post("/api/models/test")
+async def test_model_connection(request: ModelTestRequest):
+    """Test connection to a specific model"""
     try:
-        # Create model handler
-        print(f"\n🔧 Initializing {provider.upper()} model handler...")
+        provider = request.provider
+        model_key = request.model_key
         
         if provider == "local":
+            # For local models, just check if they can be initialized
+            models = get_available_models()
+            if model_key not in models["local"]:
+                return {"success": False, "error": "Model not found"}
+            
+            return {"success": True, "message": "Local model available"}
+        
+        # Test API model
+        api_key_var = f"{provider.upper()}_API_KEY"
+        api_key = os.getenv(api_key_var)
+        
+        if not api_key:
+            return {"success": False, "error": f"API key {api_key_var} not found"}
+        
+        models = get_available_models()
+        if provider not in models or model_key not in models[provider]:
+            return {"success": False, "error": "Model not found"}
+        
+        model_name = models[provider][model_key]["name"]
+        handler = APIModelHandler(provider, model_name, api_key)
+        result = handler.test_connection()
+        
+        return result
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/query/analyze")
+async def analyze_query(request: QueryRefinementRequest):
+    """Analyze query and provide refinement suggestions"""
+    try:
+        suggestions = detect_query_type(request.query)
+        
+        return {
+            "success": True,
+            "query": request.query,
+            "type": suggestions["type"],
+            "suggestions": suggestions["suggestions"],
+            "recommended_depth": "detailed",
+            "estimated_time": "2-5 minutes"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/research/start")
+async def start_research(request: ResearchRequest):
+    """Start a research session"""
+    try:
+        session_id = str(uuid.uuid4())
+        
+        # Store session data
+        active_sessions[session_id] = {
+            "request": request.dict(),
+            "start_time": time.time(),
+            "status": "initialized"
+        }
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "message": "Research session created. Connect to WebSocket for progress updates."
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/ws/{session_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    """WebSocket endpoint for real-time progress updates"""
+    await manager.connect(websocket, session_id)
+    
+    try:
+        if session_id not in active_sessions:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Invalid session ID"
+            })
+            return
+        
+        # Get session data
+        session_data = active_sessions[session_id]
+        request_data = ResearchRequest(**session_data["request"])
+        
+        # Initialize progress tracker
+        progress_tracker = ProgressTracker(session_id)
+        
+        # Send initial status
+        await websocket.send_json({
+            "type": "status",
+            "message": "Starting research process...",
+            "session_id": session_id
+        })
+        
+        # Execute research
+        result = await execute_research(request_data, progress_tracker, session_id)
+        
+        # Send final result
+        await websocket.send_json({
+            "type": "complete",
+            "result": result,
+            "session_id": session_id
+        })
+        
+    except WebSocketDisconnect:
+        manager.disconnect(session_id)
+        if session_id in active_sessions:
+            active_sessions[session_id]["status"] = "disconnected"
+    except Exception as e:
+        await websocket.send_json({
+            "type": "error",
+            "message": str(e),
+            "session_id": session_id
+        })
+    finally:
+        manager.disconnect(session_id)
+
+async def execute_research(request: ResearchRequest, progress_tracker: ProgressTracker, session_id: str) -> Dict:
+    """Execute the research process with progress tracking"""
+    try:
+        # Update session status
+        active_sessions[session_id]["status"] = "running"
+        
+        await progress_tracker.update("Initializing model handler...", 10)
+        
+        # Create model handler
+        if request.provider == "local":
             model_handler = LocalModelHandler(
-                model_key=model_key,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                verbose=args.verbose
+                model_key=request.model_key,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature,
+                verbose=False
             )
         else:
-            # API model handler
-            api_key_var = f"{provider.upper()}_API_KEY"
+            api_key_var = f"{request.provider.upper()}_API_KEY"
             api_key = os.getenv(api_key_var)
             
             if not api_key:
-                raise ValueError(f"API key {api_key_var} not found in environment")
+                raise ValueError(f"API key {api_key_var} not found")
             
             model_handler = APIModelHandler(
-                provider=provider,
-                model_name=model_key,
+                provider=request.provider,
+                model_name=request.model_key,
                 api_key=api_key,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                verbose=args.verbose
+                max_tokens=request.max_tokens,
+                temperature=request.temperature,
+                verbose=False
             )
         
-        if args.verbose:
-            print(f"🔍 Debug - Model handler created: {type(model_handler)}")
+        await progress_tracker.update("Setting up research agent...", 20)
         
-        # Create enhanced research agent with progress tracking
-        print("🔬 Setting up enhanced research agent...")
+        # Create research agent
         agent = EnhancedResearchAgent(model_handler)
-        agent.set_progress_callback(progress_tracker.update)
         
-        # Ensure output directory exists
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Set up async progress callback
+        async def progress_callback(message: str, percentage: int):
+            await progress_tracker.update(message, percentage)
         
-        # Execute enhanced research workflow
-        print(f"\n🎯 Starting enhanced research for: '{final_query}'")
-        print("="*70)
+        agent.set_progress_callback(progress_callback)
         
-        # Run the complete enhanced research workflow
-        results = agent.conduct_research(final_query, args.output)
-        
-        total_time = time.time() - start_time
-        
-        # Display enhanced results
-        print("\n" + "="*70)
-        print("📊 RESEARCH ANALYSIS SUMMARY")
-        print("="*70)
-        print(f"🏷️  Topic Categories:    {', '.join(results['categories'])}")
-        print(f"📖 Report Structure:    {len(results['report_structure'])} sections")
-        print(f"🔍 Search Results:      {len(results['search_results'])} characters")
-        print(f"📄 Content Generated:   {len(results['report_content'])} characters")
-        
-        print("\n" + "="*70)
-        print("⏱️  PERFORMANCE METRICS")
-        print("="*70)
-        print(f"🔍 Search Phase:        {results['timing']['search_time']:.1f}s")
-        print(f"🤖 AI Generation:       {results['timing']['report_time']:.1f}s")
-        print(f"📄 PDF Creation:        {results['timing']['pdf_time']:.1f}s")
-        print(f"⚡ Total Runtime:       {total_time:.1f}s")
-        print(f"🎯 Model Used:          {provider.upper()}/{model_key}")
-        
-        if results['pdf_created']:
-            output_path = Path(args.output).resolve()
-            print(f"\n✅ SUCCESS: Professional report saved to {output_path}")
-            if output_path.exists():
-                print(f"📊 File Size: {output_path.stat().st_size / 1024:.1f} KB")
+        # Generate output filename - FIXED: Use just the filename without directory
+        if request.output_filename:
+            output_filename = request.output_filename
         else:
-            print(f"\n⚠️  PDF creation had issues, text report available")
+            output_filename = generate_output_filename(request.query)
         
-        # Show report preview
-        if args.verbose:
-            print("\n" + "="*70)
-            print("📝 REPORT STRUCTURE PREVIEW")
-            print("="*70)
-            for i, section in enumerate(results['report_structure'], 1):
-                print(f"{i}. {section}")
-            
-            print("\n" + "="*70)
-            print("📄 CONTENT PREVIEW (First 800 characters)")
-            print("="*70)
-            content_preview = results['report_content'][:800]
-            print(content_preview + "..." if len(results['report_content']) > 800 else content_preview)
-            print("="*70)
+        # Ensure reports directory exists
+        reports_dir = Path("reports")
+        reports_dir.mkdir(parents=True, exist_ok=True)
         
-        print(f"\n🎉 Enhanced research completed successfully!")
-        print(f"🏆 Quality Score: {len(results['categories'])} categories analyzed")
+        # Full path for the research agent
+        output_path = reports_dir / output_filename
         
-    except KeyboardInterrupt:
-        print("\n\n⚠️  Operation cancelled by user")
-        sys.exit(1)
+        await progress_tracker.update("Starting research process...", 30)
+        
+        # Execute research (this will need to be made async in your research agent)
+        results = await asyncio.get_event_loop().run_in_executor(
+            None, 
+            agent.conduct_research, 
+            request.query, 
+            str(output_path)
+        )
+        
+        await progress_tracker.update("Research completed!", 100)
+        
+        # Update session
+        active_sessions[session_id]["status"] = "completed"
+        active_sessions[session_id]["results"] = results
+        
+        # FIXED: Return just the filename for download
+        return {
+            "success": True,
+            "report_path": output_filename,  # Just the filename, not the full path
+            "categories": results.get("categories", []),
+            "report_structure": results.get("report_structure", []),
+            "timing": results.get("timing", {}),
+            "content_length": len(results.get("report_content", "")),
+            "pdf_created": results.get("pdf_created", False)
+        }
+        
     except Exception as e:
-        print(f"\n❌ Error: {e}")
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
-        sys.exit(1)
+        active_sessions[session_id]["status"] = "error"
+        active_sessions[session_id]["error"] = str(e)
+        
+        await progress_tracker.update(f"Error: {str(e)}", 0)
+        
+        return {
+            "success": False,
+            "error": str(e)
+        }
     finally:
-        # Cleanup resources
+        # Cleanup
         if 'model_handler' in locals():
             model_handler.cleanup()
-        if 'agent' in locals() and hasattr(agent, 'cleanup'):
-            agent.cleanup()
+
+@app.get("/api/reports/{filename}")
+async def download_report(filename: str):
+    """Download a generated report - FIXED: Proper file path handling"""
+    try:
+        # FIXED: Look for the file in the reports directory
+        file_path = Path("reports") / filename
+        
+        # Also check if the filename already includes the reports directory
+        if not file_path.exists():
+            # Try to extract just the filename if it includes directory
+            clean_filename = Path(filename).name
+            file_path = Path("reports") / clean_filename
+        
+        print(f"🔍 Looking for file: {file_path}")
+        print(f"📁 File exists: {file_path.exists()}")
+        
+        if not file_path.exists():
+            # List available files for debugging
+            reports_dir = Path("reports")
+            if reports_dir.exists():
+                available_files = list(reports_dir.glob("*.pdf"))
+                print(f"📄 Available files: {[f.name for f in available_files]}")
+            
+            raise HTTPException(status_code=404, detail=f"Report not found: {filename}")
+        
+        print(f"✅ Serving file: {file_path}")
+        
+        return FileResponse(
+            path=str(file_path),
+            filename=file_path.name,
+            media_type='application/pdf'
+        )
+        
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
+    except Exception as e:
+        print(f"❌ Error serving file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/sessions/{session_id}/status")
+async def get_session_status(session_id: str):
+    """Get the status of a research session"""
+    if session_id not in active_sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    session = active_sessions[session_id]
+    return {
+        "session_id": session_id,
+        "status": session["status"],
+        "start_time": session["start_time"],
+        "elapsed_time": time.time() - session["start_time"],
+        "results": session.get("results"),
+        "error": session.get("error")
+    }
+
+@app.delete("/api/sessions/{session_id}")
+async def cleanup_session(session_id: str):
+    """Clean up a research session"""
+    if session_id in active_sessions:
+        del active_sessions[session_id]
+    
+    manager.disconnect(session_id)
+    
+    return {"success": True, "message": "Session cleaned up"}
+
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "active_sessions": len(active_sessions),
+        "websocket_connections": len(manager.active_connections)
+    }
+
+# ADDED: List available reports endpoint for debugging
+@app.get("/api/reports")
+async def list_reports():
+    """List all available reports"""
+    try:
+        reports_dir = Path("reports")
+        if not reports_dir.exists():
+            return {"reports": []}
+        
+        reports = []
+        for file_path in reports_dir.glob("*.pdf"):
+            reports.append({
+                "filename": file_path.name,
+                "size": file_path.stat().st_size,
+                "created": datetime.fromtimestamp(file_path.stat().st_ctime).isoformat()
+            })
+        
+        return {"reports": reports}
+    except Exception as e:
+        return {"error": str(e), "reports": []}
+
+# Serve static files (for potential frontend)
+if Path("frontend/build").exists():
+    app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
+    
+    @app.get("/{path:path}")
+    async def serve_frontend(path: str):
+        """Serve React frontend"""
+        frontend_path = Path("frontend/build")
+        file_path = frontend_path / path
+        
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        else:
+            # Return index.html for SPA routing
+            return FileResponse(frontend_path / "index.html")
+
+def create_app():
+    """Factory function to create the app"""
+    return app
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    
+    print("🚀 Starting AI Research Agent FastAPI Server")
+    print("=" * 50)
+    print("📡 API Documentation: http://localhost:8000/docs")
+    print("🔍 Interactive API: http://localhost:8000/redoc")
+    print("💻 Health Check: http://localhost:8000/api/health")
+    print("🌐 WebSocket: ws://localhost:8000/ws/{session_id}")
+    print("📄 Reports List: http://localhost:8000/api/reports")
+    print("=" * 50)
+    
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        reload_dirs=[str(project_root)],
+        log_level="info"
+    )

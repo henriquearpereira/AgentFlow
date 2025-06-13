@@ -1,5 +1,6 @@
 # Python
 venv/
+pdF_research_agent\reports
 __pycache__/
 *.pyc
 
@@ -18,3 +19,6 @@ __pycache__/
 # System
 .DS_Store
 Thumbs.db
+
+#node_modules
+frontend/node_modules/

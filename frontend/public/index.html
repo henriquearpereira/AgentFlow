@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#1e3a8a" />
+    <meta name="description" content="AI Research Agent - Generate comprehensive research reports using advanced AI models. Simply enter your research question and let AI do the heavy lifting." />
+    <meta name="keywords" content="AI, research, artificial intelligence, reports, automation, machine learning" />
+    <meta name="author" content="AI Research Agent" />
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="%PUBLIC_URL%" />
+    <meta property="og:title" content="AI Research Agent - Automated Research Reports" />
+    <meta property="og:description" content="Generate comprehensive research reports using advanced AI models. Simply enter your research question and let AI do the heavy lifting." />
+    <meta property="og:image" content="%PUBLIC_URL%/og-image.png" />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content="%PUBLIC_URL%" />
+    <meta property="twitter:title" content="AI Research Agent - Automated Research Reports" />
+    <meta property="twitter:description" content="Generate comprehensive research reports using advanced AI models. Simply enter your research question and let AI do the heavy lifting." />
+    <meta property="twitter:image" content="%PUBLIC_URL%/twitter-image.png" />
+
+    <!-- Apple Touch Icons -->
+    <link rel="apple-touch-icon" sizes="180x180" href="%PUBLIC_URL%/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="%PUBLIC_URL%/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="%PUBLIC_URL%/favicon-16x16.png" />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    
+    <!-- Preconnect to external domains for better performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="%PUBLIC_URL%/static/css/main.css" as="style" />
+    
+    <!-- Security headers -->
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta http-equiv="X-Frame-Options" content="DENY" />
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
+    
+    <!-- Prevent FOUC (Flash of Unstyled Content) -->
+    <style>
+      /* Critical CSS - Prevent flash of unstyled content */
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+        background: linear-gradient(135deg, #0f172a 0%, #581c87 50%, #0f172a 100%);
+        min-height: 100vh;
+        color: white;
+      }
+      
+      /* Loading spinner for initial load */
+      .loading-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: linear-gradient(135deg, #0f172a 0%, #581c87 50%, #0f172a 100%);
+        z-index: 9999;
+      }
+      
+      .loading-spinner {
+        width: 50px;
+        height: 50px;
+        border: 3px solid rgba(255, 255, 255, 0.1);
+        border-left: 3px solid #3b82f6;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      
+      /* Hide loading when React app loads */
+      #root:not(:empty) + .loading-container {
+        display: none;
+      }
+      
+      /* Ensure smooth scrolling */
+      html {
+        scroll-behavior: smooth;
+      }
+    </style>
+    
+    <title>AI Research Agent - Automated Research Reports</title>
+  </head>
+  <body>
+    <noscript>
+      <div style="text-align: center; padding: 50px; background: #1e3a8a; color: white; font-family: Arial, sans-serif;">
+        <h1>🧠 AI Research Agent</h1>
+        <p>You need to enable JavaScript to run this application.</p>
+        <p>This app uses advanced AI models to generate comprehensive research reports.</p>
+        <p>Please enable JavaScript in your browser settings and refresh the page.</p>
+      </div>
+    </noscript>
+    
+    <!-- React app root -->
+    <div id="root"></div>
+    
+    <!-- Loading fallback (shown while React app loads) -->
+    <div class="loading-container">
+      <div style="text-align: center;">
+        <div class="loading-spinner"></div>
+        <h2 style="margin-top: 20px; font-weight: 300;">Loading AI Research Agent...</h2>
+        <p style="opacity: 0.7; margin-top: 10px;">Initializing AI models and interface</p>
+      </div>
+    </div>
+    
+    <!-- Performance monitoring (optional) -->
+    <script>
+      // Simple performance monitoring
+      window.addEventListener('load', function() {
+        // Log load time for debugging
+        if (window.performance && window.performance.timing) {
+          const loadTime = window.performance.timing.loadEventEnd - window.performance.timing.navigationStart;
+          console.log('Page load time:', loadTime + 'ms');
+        }
+      });
+      
+      // Handle offline/online status
+      window.addEventListener('online', function() {
+        console.log('Connection restored');
+        // You could show a notification here
+      });
+      
+      window.addEventListener('offline', function() {
+        console.log('Connection lost');
+        // You could show a notification here
+      });
+    </script>
+  </body>
+</html>
