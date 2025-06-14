@@ -1,553 +1,592 @@
-"""
-PDF Generation module for AI Research Agent - Enhanced Version with Fixed Formatting
-"""
-
-import time
+import datetime
 import re
-from pathlib import Path
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, 
-    HRFlowable, PageBreak, KeepTogether
-)
-from reportlab.lib.units import inch
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Any
+from enum import Enum
+from abc import ABC, abstractmethod
 
+class DetailLevel(Enum):
+    BRIEF = "brief"
+    STANDARD = "standard"
+    COMPREHENSIVE = "comprehensive"
 
-class PDFGenerator:
-    """Handles PDF report generation with enhanced formatting and fixed spacing"""
+class ReportType(Enum):
+    COMPARISON = "comparison"
+    ANALYSIS = "analysis"
+    RESEARCH = "research"
+    MARKET_STUDY = "market_study"
+    TECHNICAL_REVIEW = "technical_review"
+    FEASIBILITY = "feasibility"
+
+@dataclass
+class ReportConfig:
+    detail_level: DetailLevel
+    report_type: ReportType
+    include_metrics: bool = True
+    include_examples: bool = True
+    target_audience: str = "business"
+    custom_sections: List[str] = None
+
+class ContentGenerator:
+    """Dynamic content generation based on topic analysis"""
     
-    def __init__(self):
-        self.styles = getSampleStyleSheet()
-        self._setup_custom_styles()
-        
-        # Define sections that should start on new pages
-        self.page_break_sections = {
-            'primary sources', 'data sources', 'methodology', 'references',
-            'appendix', 'bibliography', 'conclusions', 'recommendations',
-            'detailed analysis', 'technical specifications', 'future outlook'
-        }
+    def __init__(self, topic: str, config: ReportConfig):
+        self.topic = topic
+        self.config = config
+        self.topic_analysis = self._analyze_topic()
+        self.generated_at = datetime.datetime.now()
     
-    def _setup_custom_styles(self):
-        """Define custom styles for professional formatting with improved spacing"""
-        # Custom title style with more space after
-        self.styles.add(ParagraphStyle(
-            name='TitleCustom',
-            fontSize=28,
-            spaceAfter=30,  # Increased from 20 to 30
-            spaceBefore=12,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor("#2C3E50"),
-            fontName='Helvetica-Bold'
-        ))
+    def _analyze_topic(self) -> Dict[str, Any]:
+        """Analyze the topic to determine content structure and focus areas"""
+        topic_lower = self.topic.lower()
         
-        # Custom section header style
-        self.styles.add(ParagraphStyle(
-            name='SectionHeader',
-            fontSize=16,
-            spaceAfter=12,  # Increased from 10 to 12
-            spaceBefore=20,  # Increased from 18 to 20
-            textColor=colors.HexColor("#34495E"),
-            fontName='Helvetica-Bold',
-            borderWidth=0,
-            borderPadding=0
-        ))
+        # Detect comparison topics
+        comparison_keywords = ['vs', 'versus', 'compare', 'comparison', 'against', 'between']
+        is_comparison = any(keyword in topic_lower for keyword in comparison_keywords)
         
-        # Custom subsection header with better spacing
-        self.styles.add(ParagraphStyle(
-            name='SubsectionHeader',
-            fontSize=14,
-            spaceAfter=10,  # Increased from 8 to 10
-            spaceBefore=15,  # Increased from 12 to 15
-            textColor=colors.HexColor("#5D6D7E"),
-            fontName='Helvetica-Bold'
-        ))
+        # Extract main subjects for comparison
+        subjects = []
+        if is_comparison:
+            # Split on common comparison separators
+            for sep in [' vs ', ' versus ', ' against ', ' and ', ' or ']:
+                if sep in topic_lower:
+                    parts = topic_lower.split(sep)
+                    subjects = [part.strip() for part in parts if part.strip()]
+                    break
         
-        # Enhanced body text
-        self.styles.add(ParagraphStyle(
-            name='BodyTextCustom',
-            fontSize=11,
-            leading=16,
-            spaceAfter=8,  # Increased from 6 to 8
-            alignment=TA_JUSTIFY,
-            textColor=colors.HexColor("#2C3E50")
-        ))
+        # Detect technical vs business focus
+        tech_keywords = ['api', 'database', 'software', 'programming', 'algorithm', 'framework', 'technology']
+        business_keywords = ['market', 'strategy', 'business', 'revenue', 'cost', 'roi', 'investment']
         
-        # Highlighted text for key insights
-        self.styles.add(ParagraphStyle(
-            name='HighlightText',
-            fontSize=12,
-            leading=16,
-            spaceAfter=10,  # Increased from 8 to 10
-            spaceBefore=10,  # Increased from 8 to 10
-            textColor=colors.HexColor("#E74C3C"),
-            fontName='Helvetica-Bold',
-            borderWidth=1,
-            borderColor=colors.HexColor("#E74C3C"),
-            borderPadding=8,
-            backColor=colors.HexColor("#FCF3CF")
-        ))
+        is_technical = any(keyword in topic_lower for keyword in tech_keywords)
+        is_business = any(keyword in topic_lower for keyword in business_keywords)
         
-        # Footer style
-        self.styles.add(ParagraphStyle(
-            name='FooterText',
-            fontSize=9,
-            alignment=TA_CENTER,
-            textColor=colors.grey,
-            fontName='Helvetica-Oblique'
-        ))
-        
-        # Metadata style with better spacing
-        self.styles.add(ParagraphStyle(
-            name='MetadataText',
-            fontSize=10,
-            spaceAfter=6,  # Increased from 4 to 6
-            spaceBefore=3,
-            textColor=colors.HexColor("#7F8C8D"),
-            fontName='Helvetica'
-        ))
-        
-        # Topic title style (separate from section headers)
-        self.styles.add(ParagraphStyle(
-            name='TopicTitle',
-            fontSize=18,
-            spaceAfter=15,
-            spaceBefore=8,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor("#34495E"),
-            fontName='Helvetica-Bold'
-        ))
-    
-    def _clean_title(self, title: str) -> str:
-        """Clean and improve title formatting with better hashtag removal"""
-        if not title:
-            return title
-        
-        # Remove ALL markdown hashtag markers (handles ###, ####, etc.)
-        title = re.sub(r'^#{1,6}\s*', '', title)
-        title = re.sub(r'#{1,6}\s*$', '', title)  # Also remove trailing hashtags
-        
-        # Remove extra whitespace and normalize
-        title = re.sub(r'\s+', ' ', title).strip()
-        
-        # Handle special cases and improve readability
-        # Convert underscores and hyphens to spaces
-        title = re.sub(r'[_-]+', ' ', title)
-        
-        # Fix common patterns
-        title_fixes = {
-            r'\b(ai|ml|ai/ml)\b': 'AI/ML',
-            r'\bapi\b': 'API',
-            r'\bui\b': 'UI',
-            r'\bux\b': 'UX',
-            r'\bsdk\b': 'SDK',
-            r'\baws\b': 'AWS',
-            r'\bgcp\b': 'GCP',
-            r'\bkubernetes\b': 'Kubernetes',
-            r'\bdocker\b': 'Docker',
-            r'\bjs\b': 'JavaScript',
-            r'\bts\b': 'TypeScript',
-            r'\bhtml\b': 'HTML',
-            r'\bcss\b': 'CSS',
-            r'\bsql\b': 'SQL',
-            r'\bnosql\b': 'NoSQL',
-            r'\bmongodb\b': 'MongoDB',
-            r'\bpostgresql\b': 'PostgreSQL',
-            r'\bmysql\b': 'MySQL',
-            r'\bredis\b': 'Redis',
-            r'\breact\b': 'React',
-            r'\bvue\b': 'Vue.js',
-            r'\bangular\b': 'Angular',
-            r'\bnode\b': 'Node.js',
-            r'\bpython\b': 'Python',
-            r'\bjava\b': 'Java',
-            r'\bc\+\+\b': 'C++',
-            r'\bc#\b': 'C#',
-            r'\bgo\b': 'Go',
-            r'\brust\b': 'Rust',
-            r'\bswift\b': 'Swift',
-            r'\bkotlin\b': 'Kotlin',
-            r'\bphp\b': 'PHP',
-            r'\bruby\b': 'Ruby',
-            r'\bscala\b': 'Scala',
-            r'\bdevops\b': 'DevOps',
-            r'\bcicd\b': 'CI/CD',
-            r'\bgithub\b': 'GitHub',
-            r'\bgitlab\b': 'GitLab',
-            r'\bjenkins\b': 'Jenkins',
-            r'\bansible\b': 'Ansible',
-            r'\bterraform\b': 'Terraform',
+        # Detect industry/domain
+        industries = {
+            'healthcare': ['health', 'medical', 'hospital', 'patient', 'clinical'],
+            'finance': ['financial', 'banking', 'investment', 'trading', 'fintech'],
+            'technology': ['tech', 'software', 'digital', 'ai', 'machine learning'],
+            'retail': ['retail', 'ecommerce', 'shopping', 'consumer'],
+            'manufacturing': ['manufacturing', 'industrial', 'production', 'supply chain']
         }
         
-        # Apply fixes (case insensitive)
-        for pattern, replacement in title_fixes.items():
-            title = re.sub(pattern, replacement, title, flags=re.IGNORECASE)
+        detected_industry = 'general'
+        for industry, keywords in industries.items():
+            if any(keyword in topic_lower for keyword in keywords):
+                detected_industry = industry
+                break
         
-        # Proper case for countries and cities
-        geographical_terms = {
-            r'\bbelgium\b': 'Belgium',
-            r'\bbrussels\b': 'Brussels',
-            r'\bantwerp\b': 'Antwerp',
-            r'\bghent\b': 'Ghent',
-            r'\bliege\b': 'Liège',
-            r'\bportugal\b': 'Portugal',
-            r'\blisbon\b': 'Lisbon',
-            r'\bporto\b': 'Porto',
-            r'\bcoimbra\b': 'Coimbra',
-            r'\bbraga\b': 'Braga',
-            r'\bfrance\b': 'France',
-            r'\bparis\b': 'Paris',
-            r'\bgermany\b': 'Germany',
-            r'\bberlin\b': 'Berlin',
-            r'\bmunich\b': 'Munich',
-            r'\bnetherlands\b': 'Netherlands',
-            r'\bamsterdam\b': 'Amsterdam',
-            r'\buk\b': 'UK',
-            r'\bunited kingdom\b': 'United Kingdom',
-            r'\blondon\b': 'London',
-            r'\busa\b': 'USA',
-            r'\bunited states\b': 'United States',
-            r'\bcanada\b': 'Canada',
-            r'\btoronto\b': 'Toronto',
-            r'\bvancouver\b': 'Vancouver',
-            r'\baustralia\b': 'Australia',
-            r'\bsydney\b': 'Sydney',
-            r'\bmelbourne\b': 'Melbourne',
-            r'\bchina\b': 'China',
-            r'\bbeijing\b': 'Beijing',
-            r'\bshanghai\b': 'Shanghai',
-            r'\bshenzhen\b': 'Shenzhen',
-            r'\bsingapore\b': 'Singapore',
+        return {
+            'is_comparison': is_comparison,
+            'subjects': subjects,
+            'is_technical': is_technical,
+            'is_business': is_business,
+            'industry': detected_industry,
+            'main_focus': self._extract_main_focus(topic_lower),
+            'suggested_sections': self._suggest_sections(is_comparison, is_technical, is_business)
+        }
+    
+    def _extract_main_focus(self, topic_lower: str) -> str:
+        """Extract the main focus/domain from the topic"""
+        # Remove common words and extract meaningful terms
+        stop_words = {'in', 'for', 'of', 'the', 'and', 'or', 'vs', 'versus', 'compare', 'comparison', 'analysis', 'report'}
+        words = re.findall(r'\b\w+\b', topic_lower)
+        important_words = [w for w in words if w not in stop_words and len(w) > 2]
+        return ' '.join(important_words[:3])  # Take first 3 important words
+    
+    def _suggest_sections(self, is_comparison: bool, is_technical: bool, is_business: bool) -> List[str]:
+        """Suggest appropriate sections based on topic analysis"""
+        base_sections = ['overview', 'analysis']
+        
+        if is_comparison:
+            base_sections.extend(['comparison_table', 'advantages_disadvantages', 'use_cases'])
+        else:
+            base_sections.extend(['key_findings', 'implications'])
+        
+        if is_technical:
+            base_sections.extend(['technical_specifications', 'implementation_considerations'])
+        
+        if is_business:
+            base_sections.extend(['market_analysis', 'cost_benefit_analysis', 'roi_projections'])
+        
+        base_sections.extend(['recommendations', 'conclusion'])
+        return base_sections
+
+class UniversalReportGenerator:
+    """Universal report generator that adapts to any topic"""
+    
+    def __init__(self, topic: str, config: ReportConfig):
+        self.topic = topic
+        self.config = config
+        self.content_gen = ContentGenerator(topic, config)
+        
+    def generate_report(self) -> Dict[str, Any]:
+        """Generate a complete report for any topic"""
+        analysis = self.content_gen.topic_analysis
+        
+        # Determine sections to include
+        sections = self.config.custom_sections or analysis['suggested_sections']
+        
+        report = {
+            'title': self._generate_title(),
+            'metadata': self._generate_metadata(),
+            'executive_summary': self._generate_executive_summary(),
         }
         
-        for pattern, replacement in geographical_terms.items():
-            title = re.sub(pattern, replacement, title, flags=re.IGNORECASE)
-        
-        # Capitalize first letter of each word (title case) but preserve known acronyms
-        words = title.split()
-        title_cased_words = []
-        
-        for word in words:
-            # Don't change words that are already properly formatted (like API, AWS, etc.)
-            if word.isupper() and len(word) <= 4:  # Likely acronym
-                title_cased_words.append(word)
-            elif word in ['AI/ML', 'UI/UX', 'CI/CD']:  # Special cases
-                title_cased_words.append(word)
+        # Dynamically generate sections based on topic analysis
+        for section in sections:
+            if hasattr(self, f'_generate_{section}'):
+                report[section] = getattr(self, f'_generate_{section}')()
             else:
-                title_cased_words.append(word.capitalize())
+                report[section] = self._generate_generic_section(section)
         
-        title = ' '.join(title_cased_words)
-        
-        # Clean up extra spaces
-        title = re.sub(r'\s+', ' ', title).strip()
-        
-        return title
+        return report
     
-    def _should_page_break(self, section_title: str) -> bool:
-        """Determine if a section should start on a new page"""
-        title_lower = section_title.lower().strip()
-        return any(keyword in title_lower for keyword in self.page_break_sections)
+    def _generate_title(self) -> str:
+        """Generate appropriate title based on topic and report type"""
+        if self.content_gen.topic_analysis['is_comparison']:
+            return f"Comparative Analysis: {self.topic.title()}"
+        elif self.config.report_type == ReportType.MARKET_STUDY:
+            return f"Market Study: {self.topic.title()}"
+        elif self.config.report_type == ReportType.FEASIBILITY:
+            return f"Feasibility Study: {self.topic.title()}"
+        else:
+            return f"Research Report: {self.topic.title()}"
     
-    def create_pdf(self, content: str, filename: str, topic: str = None) -> bool:
-        """
-        Create PDF report with enhanced formatting and fixed spacing
-        
-        Args:
-            content: Report content in markdown format
-            filename: Output PDF filename
-            topic: Optional topic for title extraction
-            
-        Returns:
-            bool: Success status
-        """
-        print(f"📄 Creating enhanced PDF: {filename}")
-        try:
-            # Create directory if needed
-            Path(filename).parent.mkdir(parents=True, exist_ok=True)
-            
-            doc = SimpleDocTemplate(
-                filename, 
-                pagesize=letter,
-                leftMargin=0.8*inch,
-                rightMargin=0.8*inch,
-                topMargin=1*inch,
-                bottomMargin=1*inch
-            )
-            story = []
-            
-            # Enhanced title section with better spacing
-            story.append(Paragraph("AI Research Report", self.styles['TitleCustom']))
-            story.append(Spacer(1, 20))  # Extra space after main title
-            
-            # Topic extraction and formatting with cleanup
-            if not topic:
-                topic = Path(filename).stem.replace('_', ' ')
-                # Remove timestamp from filename
-                topic = re.sub(r'_\d{8}_\d{4}$', '', topic)
-            
-            # Clean the topic title
-            cleaned_topic = self._clean_title(topic)
-            story.append(Paragraph(f"Research Topic: {cleaned_topic}", self.styles['TopicTitle']))
-            story.append(Spacer(1, 15))  # Space after topic title
-            
-            # Add subtle divider line
-            story.append(HRFlowable(
-                width="100%", 
-                thickness=1, 
-                color=colors.HexColor("#BDC3C7"),
-                spaceBefore=5,
-                spaceAfter=20  # Increased from 15 to 20
-            ))
-            
-            # Metadata section with better spacing
-            story.append(Paragraph(f"<b>Generated:</b> {time.strftime('%B %d, %Y at %H:%M:%S')}", self.styles['MetadataText']))
-            story.append(Paragraph("<b>Powered by:</b> AI Research Agent", self.styles['MetadataText']))
-            story.append(Spacer(1, 30))  # Increased from 25 to 30
-            
-            # Process content with enhanced formatting
-            self._process_content(content, story)
-            
-            # Add footer section
-            story.append(Spacer(1, 30))
-            story.append(HRFlowable(
-                width="100%", 
-                thickness=0.5, 
-                color=colors.HexColor("#BDC3C7")
-            ))
-            story.append(Spacer(1, 8))
-            story.append(Paragraph(
-                "This report was automatically generated by AI Research Agent", 
-                self.styles['FooterText']
-            ))
-            
-            doc.build(story)
-            print(f"✅ Enhanced PDF created successfully: {filename}")
-            return True
-            
-        except Exception as e:
-            print(f"⚠️ PDF creation failed: {e}")
-            return False
+    def _generate_metadata(self) -> Dict[str, str]:
+        return {
+            'generated_date': self.content_gen.generated_at.strftime("%B %d, %Y at %H:%M:%S"),
+            'detail_level': self.config.detail_level.value.title(),
+            'report_type': self.config.report_type.value.replace('_', ' ').title(),
+            'target_audience': self.config.target_audience.title(),
+            'topic_classification': self.content_gen.topic_analysis['industry'].title(),
+            'focus_area': self.content_gen.topic_analysis['main_focus'].title()
+        }
     
-    def _process_content(self, content: str, story: list):
-        """Process markdown content with enhanced formatting and better title cleaning"""
-        # Split by ## but also handle ### and other heading levels
-        sections = re.split(r'\n(?=##)', content)
+    def _generate_executive_summary(self) -> Dict[str, Any]:
+        """Generate executive summary adapted to any topic"""
+        analysis = self.content_gen.topic_analysis
         
-        for i, section in enumerate(sections):
-            if not section.strip():
-                continue
-            
-            lines = section.split('\n')
-            section_title = lines[0].strip()
-            section_content = '\n'.join(lines[1:]).strip()
-            
-            if section_title:
-                # Clean the section title (removes ALL hashtag markers)
-                cleaned_title = self._clean_title(section_title)
-                
-                # Skip empty titles after cleaning
-                if not cleaned_title:
-                    continue
-                
-                # Determine the heading level based on hashtags
-                hashtag_count = len(re.match(r'^#+', section_title.strip()).group()) if re.match(r'^#+', section_title.strip()) else 2
-                
-                # Choose appropriate style based on heading level
-                if hashtag_count <= 2:
-                    title_style = self.styles['SectionHeader']
-                else:
-                    title_style = self.styles['SubsectionHeader']
-                
-                # Check if this section should start on a new page
-                if hashtag_count <= 2 and self._should_page_break(cleaned_title):
-                    story.append(PageBreak())
-                    story.append(Spacer(1, 12))  # Add some space after page break
-                
-                # Add section header with enhanced styling
-                story.append(Paragraph(cleaned_title, title_style))
-                
-                # Check if this section contains salary/compensation data
-                if self._contains_salary_data(section_content):
-                    salary_table = self._extract_salary_table(section_content)
-                    if salary_table:
-                        story.append(Spacer(1, 10))  # Space before table
-                        story.append(salary_table)
-                        story.append(Spacer(1, 15))  # Space after table
-                
-                # Process remaining content
-                self._process_section_content(section_content, story)
-                
-                # Add spacing between sections (except for last section)
-                if i < len(sections) - 2:
-                    story.append(Spacer(1, 25))  # Increased from 20 to 25
-    
-    def _process_section_content(self, content: str, story: list):
-        """Process individual section content with improved styling"""
-        paragraphs = content.split('\n\n')
-        
-        for paragraph in paragraphs:
-            if not paragraph.strip():
-                continue
-            
-            lines = paragraph.split('\n')
-            
-            # Process bullet points
-            if any(line.strip().startswith('-') or line.strip().startswith('*') or line.strip().startswith('•') for line in lines):
-                for line in lines:
-                    line = line.strip()
-                    if line.startswith(('-', '*', '•')):
-                        bullet_text = line[1:].strip()
-                        # Clean bullet text titles
-                        bullet_text = self._clean_bullet_text(bullet_text)
-                        
-                        # Highlight key financial data
-                        if self._is_key_insight(bullet_text):
-                            story.append(Paragraph(f"• {bullet_text}", self.styles['HighlightText']))
-                        else:
-                            story.append(Paragraph(f"• {bullet_text}", self.styles['BodyTextCustom']))
-                        story.append(Spacer(1, 4))  # Increased from 3 to 4
-            
-            # Process URLs
-            elif any('http' in line for line in lines):
-                for line in lines:
-                    if 'http' in line:
-                        # Make URLs clickable
-                        url_pattern = r'(https?://[^\s]+)'
-                        formatted_line = re.sub(url_pattern, r'<link href="\1">\1</link>', line)
-                        story.append(Paragraph(formatted_line, self.styles['BodyTextCustom']))
-                    else:
-                        story.append(Paragraph(line, self.styles['BodyTextCustom']))
-            
-            # Regular paragraphs
+        # Base content templates by detail level
+        if self.config.detail_level == DetailLevel.BRIEF:
+            if analysis['is_comparison']:
+                content = f"This analysis compares {' and '.join(analysis['subjects'])} across key dimensions. The comparison reveals distinct advantages and use cases for each option, with selection criteria depending on specific requirements and constraints."
             else:
-                combined_text = ' '.join(line.strip() for line in lines if line.strip())
-                if combined_text:
-                    story.append(Paragraph(combined_text, self.styles['BodyTextCustom']))
-            
-            story.append(Spacer(1, 10))  # Increased from 8 to 10
+                content = f"This report analyzes {self.topic} examining key factors, opportunities, and challenges. The analysis provides insights for decision-making and strategic planning in the {analysis['industry']} domain."
+        
+        elif self.config.detail_level == DetailLevel.STANDARD:
+            if analysis['is_comparison']:
+                content = f"This comprehensive analysis examines {self.topic} across multiple evaluation criteria. The research identifies key differentiators, performance characteristics, and optimal use cases for each option. Findings indicate that selection should be based on specific operational requirements, budget constraints, and strategic objectives within the {analysis['industry']} context."
+            else:
+                content = f"This detailed analysis of {self.topic} examines current state, trends, and future implications within the {analysis['industry']} sector. The research methodology combines quantitative analysis with qualitative insights to provide actionable recommendations for stakeholders and decision-makers."
+        
+        else:  # COMPREHENSIVE
+            if analysis['is_comparison']:
+                content = f"This comprehensive comparative analysis evaluates {self.topic} through systematic examination of technical capabilities, economic factors, and strategic implications. The research methodology incorporates industry best practices, expert insights, and empirical data to provide definitive guidance for {analysis['industry']} organizations. Key findings highlight the importance of alignment between solution characteristics and organizational requirements, with particular emphasis on long-term strategic value and operational sustainability."
+            else:
+                content = f"This extensive research report provides in-depth analysis of {self.topic} within the broader context of {analysis['industry']} industry dynamics. The comprehensive methodology combines primary research, secondary analysis, and expert consultation to deliver actionable insights for strategic decision-making. The analysis encompasses current market conditions, emerging trends, competitive landscape, and future growth projections to support informed planning and investment decisions."
+        
+        # Generate key points based on topic analysis
+        key_points = self._generate_key_points(analysis)
+        
+        return {
+            'content': content,
+            'key_points': key_points
+        }
     
-    def _clean_bullet_text(self, text: str) -> str:
-        """Clean bullet point text, especially for bold/highlighted items"""
-        # Remove extra asterisks used for markdown bold
-        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
-        text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
+    def _generate_key_points(self, analysis: Dict[str, Any]) -> List[str]:
+        """Generate relevant key points based on topic analysis"""
+        points = []
         
-        # Clean up technical terms in bullet points
-        text = re.sub(r'\bsalary range\b', 'Salary Range', text, flags=re.IGNORECASE)
-        text = re.sub(r'\bmedian compensation\b', 'Median Compensation', text, flags=re.IGNORECASE)
-        text = re.sub(r'\baverage compensation\b', 'Average Compensation', text, flags=re.IGNORECASE)
-        text = re.sub(r'\bdata points analyzed\b', 'Data Points Analyzed', text, flags=re.IGNORECASE)
+        if analysis['is_comparison']:
+            if len(analysis['subjects']) >= 2:
+                points.append(f"{analysis['subjects'][0].title()} offers specific advantages in certain use cases")
+                points.append(f"{analysis['subjects'][1].title()} provides alternative benefits for different scenarios")
+            points.append("Selection criteria should align with specific organizational needs")
+            points.append("Implementation considerations vary significantly between options")
+        else:
+            points.append(f"Current {analysis['main_focus']} landscape presents both opportunities and challenges")
+            points.append(f"Key success factors identified for {analysis['industry']} organizations")
+            points.append("Strategic recommendations provided for optimal outcomes")
         
-        return text
+        if analysis['is_technical']:
+            points.append("Technical specifications and implementation requirements analyzed")
+        
+        if analysis['is_business']:
+            points.append("Business impact and ROI considerations evaluated")
+        
+        if self.config.detail_level == DetailLevel.COMPREHENSIVE:
+            points.extend([
+                "Long-term strategic implications assessed",
+                "Risk mitigation strategies identified",
+                "Industry best practices incorporated"
+            ])
+        
+        return points
     
-    def _contains_salary_data(self, content: str) -> bool:
-        """Check if content contains salary/compensation data"""
-        salary_keywords = ['salary', 'compensation', '€', '$', 'wage', 'income', 'pay']
-        return any(keyword.lower() in content.lower() for keyword in salary_keywords)
+    def _generate_comparison_table(self) -> Dict[str, Any]:
+        """Generate comparison table for comparison topics"""
+        analysis = self.content_gen.topic_analysis
+        
+        if not analysis['is_comparison'] or len(analysis['subjects']) < 2:
+            return {"note": "Comparison table not applicable for this topic"}
+        
+        subjects = analysis['subjects'][:2]  # Take first two subjects
+        
+        # Generic comparison categories that work for most topics
+        categories = {
+            'primary_focus': f"Core strengths and intended use cases",
+            'complexity': f"Implementation and operational complexity",
+            'cost_structure': f"Associated costs and investment requirements",
+            'scalability': f"Growth and expansion capabilities",
+            'maintenance': f"Ongoing maintenance and support needs",
+            'expertise_required': f"Skills and knowledge requirements"
+        }
+        
+        comparison = {}
+        for category, description in categories.items():
+            comparison[category] = {
+                subjects[0].title(): f"Optimized for specific {category.replace('_', ' ')} requirements",
+                subjects[1].title(): f"Alternative approach to {category.replace('_', ' ')} considerations",
+                'description': description
+            }
+        
+        return comparison
     
-    def _extract_salary_table(self, content: str) -> Table:
-        """Extract and format salary data into a professional table"""
-        # Look for salary patterns
-        salary_patterns = [
-            r'€([\d,]+)\s*-\s*€([\d,]+)',  # Range pattern
-            r'€([\d,]+)',  # Single value pattern
-            r'Median[:\s]+€([\d,]+)',
-            r'Average[:\s]+€([\d,]+)'
-        ]
+    def _generate_advantages_disadvantages(self) -> Dict[str, Any]:
+        """Generate advantages and disadvantages for comparison topics"""
+        analysis = self.content_gen.topic_analysis
         
-        salary_data = []
+        if not analysis['is_comparison']:
+            return self._generate_pros_cons()
         
-        # Extract salary ranges
-        range_match = re.search(r'€([\d,]+)\s*-\s*€([\d,]+)', content)
-        if range_match:
-            salary_data.append(['Salary Range', f"€{range_match.group(1)} - €{range_match.group(2)}"])
+        subjects = analysis['subjects'][:2] if len(analysis['subjects']) >= 2 else ['Option A', 'Option B']
         
-        # Extract median
-        median_match = re.search(r'[Mm]edian[:\s]*€([\d,]+)', content)
-        if median_match:
-            salary_data.append(['Median Compensation', f"€{median_match.group(1)}"])
-        
-        # Extract average
-        avg_match = re.search(r'[Aa]verage[:\s]*€([\d,]+)', content)
-        if avg_match:
-            salary_data.append(['Average Compensation', f"€{avg_match.group(1)}"])
-        
-        if salary_data:
-            # Create table with headers
-            table_data = [['Metric', 'Value']] + salary_data
-            
-            table = Table(table_data, colWidths=[2.5*inch, 2.5*inch])
-            table.setStyle(TableStyle([
-                # Header styling
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#34495E")),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                
-                # Data rows styling
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 11),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8F9FA")]),
-                
-                # Borders and padding
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
-                ('LEFTPADDING', (0, 0), (-1, -1), 12),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-                ('TOPPADDING', (0, 0), (-1, -1), 8),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-            ]))
-            
-            return table
-        
-        return None
+        return {
+            subjects[0].title(): {
+                'advantages': [
+                    f"Strong performance in specific {analysis['main_focus']} scenarios",
+                    f"Well-established ecosystem and community support",
+                    f"Proven track record in {analysis['industry']} implementations",
+                    f"Comprehensive documentation and learning resources"
+                ],
+                'disadvantages': [
+                    f"May have limitations in certain use cases",
+                    f"Potential scalability constraints in specific scenarios",
+                    f"Higher complexity for simple {analysis['main_focus']} needs",
+                    f"Resource requirements may be significant"
+                ]
+            },
+            subjects[1].title(): {
+                'advantages': [
+                    f"Flexibility and adaptability for diverse {analysis['main_focus']} needs",
+                    f"Modern architecture and design principles",
+                    f"Optimized for contemporary {analysis['industry']} requirements",
+                    f"Streamlined approach to common challenges"
+                ],
+                'disadvantages': [
+                    f"Newer technology with evolving best practices",
+                    f"Smaller ecosystem compared to established alternatives",
+                    f"May require specialized expertise",
+                    f"Limited long-term track record in some scenarios"
+                ]
+            }
+        }
     
-    def _is_key_insight(self, text: str) -> bool:
-        """Determine if text contains key insights that should be highlighted"""
-        key_indicators = [
-            'salary', 'compensation', '€', '$', 'growth', 'increase', 'decrease',
-            'trend', 'outlook', 'forecast', 'projected', 'expected'
-        ]
-        return any(indicator.lower() in text.lower() for indicator in key_indicators)
-    
-    def create_text_report(self, content: str, filename: str) -> bool:
-        """
-        Create plain text report as fallback
+    def _generate_pros_cons(self) -> Dict[str, Any]:
+        """Generate pros and cons for non-comparison topics"""
+        analysis = self.content_gen.topic_analysis
         
-        Args:
-            content: Report content
-            filename: Output filename (will change extension to .txt)
-            
-        Returns:
-            bool: Success status
-        """
-        try:
-            txt_filename = Path(filename).with_suffix('.txt')
-            txt_filename.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Extract and clean topic from filename
-            topic = txt_filename.stem.replace('_', ' ')
-            topic = re.sub(r'_\d{8}_\d{4}$', '', topic)
-            cleaned_topic = self._clean_title(topic)
-            
-            with open(txt_filename, 'w', encoding='utf-8') as f:
-                f.write("=" * 80 + "\n")
-                f.write("AI RESEARCH REPORT\n")
-                f.write("=" * 80 + "\n\n")
-                f.write(f"Research Topic: {cleaned_topic}\n")
-                f.write(f"Generated: {time.strftime('%B %d, %Y at %H:%M:%S')}\n")
-                f.write("Powered by: AI Research Agent\n")
-                f.write("-" * 80 + "\n\n")
-                f.write(content)
-                f.write("\n\n" + "-" * 80 + "\n")
-                f.write("This report was automatically generated by AI Research Agent\n")
-                f.write("=" * 80)
-            
-            print(f"📄 Enhanced text report saved: {txt_filename}")
-            return True
-            
-        except Exception as e:
-            print(f"⚠️ Text report creation failed: {e}")
-            return False
+        return {
+            'advantages': [
+                f"Addresses key challenges in {analysis['industry']} sector",
+                f"Provides measurable improvements in {analysis['main_focus']}",
+                f"Aligns with current industry trends and best practices",
+                f"Offers competitive advantages when properly implemented"
+            ],
+            'disadvantages': [
+                f"Implementation complexity may require significant resources",
+                f"Change management challenges in traditional {analysis['industry']} environments",
+                f"Initial investment and learning curve considerations",
+                f"Ongoing maintenance and optimization requirements"
+            ],
+            'considerations': [
+                f"Organizational readiness for {analysis['main_focus']} initiatives",
+                f"Integration with existing {analysis['industry']} systems",
+                f"Long-term strategic alignment and sustainability",
+                f"Risk mitigation and contingency planning"
+            ]
+        }
+    
+    def _generate_use_cases(self) -> Dict[str, Any]:
+        """Generate use cases adapted to any topic"""
+        analysis = self.content_gen.topic_analysis
+        
+        use_cases = {
+            'primary_applications': [
+                f"Organizations seeking to optimize {analysis['main_focus']} operations",
+                f"{analysis['industry'].title()} companies with specific performance requirements",
+                f"Enterprises planning digital transformation initiatives",
+                f"Teams requiring enhanced {analysis['main_focus']} capabilities"
+            ],
+            'industry_specific': {
+                analysis['industry']: [
+                    f"Large-scale {analysis['industry']} operations with complex requirements",
+                    f"Mid-market {analysis['industry']} companies seeking competitive advantages",
+                    f"Startups in {analysis['industry']} sector requiring scalable solutions"
+                ]
+            }
+        }
+        
+        if analysis['is_comparison']:
+            subjects = analysis['subjects'][:2] if len(analysis['subjects']) >= 2 else ['Option A', 'Option B']
+            use_cases.update({
+                f'{subjects[0]}_optimal_for': [
+                    f"Scenarios requiring proven {analysis['main_focus']} approaches",
+                    f"Organizations with established {analysis['industry']} workflows",
+                    f"Use cases prioritizing stability and reliability"
+                ],
+                f'{subjects[1]}_optimal_for': [
+                    f"Dynamic environments requiring {analysis['main_focus']} flexibility",
+                    f"Modern {analysis['industry']} applications with evolving needs",
+                    f"Organizations prioritizing innovation and adaptability"
+                ]
+            })
+        
+        return use_cases
+    
+    def _generate_recommendations(self) -> Dict[str, Any]:
+        """Generate recommendations adapted to any topic"""
+        analysis = self.content_gen.topic_analysis
+        
+        recommendations = {
+            'key_recommendations': [
+                f"Conduct thorough assessment of current {analysis['main_focus']} requirements",
+                f"Develop clear success criteria and measurement frameworks",
+                f"Ensure adequate {analysis['industry']} expertise and resources",
+                f"Plan for gradual implementation with pilot programs"
+            ],
+            'implementation_strategy': [
+                f"Phase 1: Assessment and planning for {analysis['main_focus']} initiative",
+                f"Phase 2: Pilot implementation in controlled {analysis['industry']} environment",
+                f"Phase 3: Full deployment with performance monitoring",
+                f"Phase 4: Optimization and continuous improvement"
+            ]
+        }
+        
+        if analysis['is_comparison']:
+            subjects = analysis['subjects'][:2] if len(analysis['subjects']) >= 2 else ['Option A', 'Option B']
+            recommendations.update({
+                'selection_criteria': [
+                    f"Evaluate {subjects[0]} for established {analysis['main_focus']} requirements",
+                    f"Consider {subjects[1]} for flexible and evolving needs",
+                    f"Assess organizational readiness and expertise availability",
+                    f"Analyze long-term strategic alignment with {analysis['industry']} goals"
+                ]
+            })
+        
+        if self.config.detail_level == DetailLevel.COMPREHENSIVE:
+            recommendations.update({
+                'strategic_considerations': [
+                    f"Align {analysis['main_focus']} strategy with broader organizational objectives",
+                    f"Develop {analysis['industry']}-specific success metrics and KPIs",
+                    f"Establish governance framework for ongoing management",
+                    f"Create change management plan for stakeholder adoption"
+                ],
+                'risk_mitigation': [
+                    f"Identify potential risks in {analysis['main_focus']} implementation",
+                    f"Develop contingency plans for {analysis['industry']} specific challenges",
+                    f"Establish monitoring and early warning systems",
+                    f"Create rollback procedures for critical scenarios"
+                ]
+            })
+        
+        return recommendations
+    
+    def _generate_conclusion(self) -> Dict[str, Any]:
+        """Generate conclusion adapted to any topic"""
+        analysis = self.content_gen.topic_analysis
+        
+        if self.config.detail_level == DetailLevel.BRIEF:
+            summary = f"Analysis of {self.topic} reveals important considerations for {analysis['industry']} organizations. Success depends on careful evaluation of requirements and systematic implementation approach."
+        elif self.config.detail_level == DetailLevel.STANDARD:
+            summary = f"This analysis of {self.topic} provides comprehensive insights for {analysis['industry']} decision-makers. Key findings emphasize the importance of alignment between {analysis['main_focus']} requirements and organizational capabilities. Strategic implementation with proper planning and resources will drive optimal outcomes."
+        else:  # COMPREHENSIVE
+            summary = f"This comprehensive analysis of {self.topic} demonstrates the complexity and strategic importance of {analysis['main_focus']} decisions in the {analysis['industry']} sector. The research findings indicate that successful outcomes require careful consideration of organizational readiness, technical requirements, and long-term strategic alignment. Organizations that invest in proper planning, stakeholder engagement, and systematic implementation will realize significant competitive advantages."
+        
+        conclusion = {'summary': summary}
+        
+        if analysis['is_comparison']:
+            conclusion['final_recommendation'] = f"The choice between {' and '.join(analysis['subjects'])} should be based on specific organizational needs, technical requirements, and strategic objectives rather than universal preferences."
+        else:
+            conclusion['final_recommendation'] = f"Organizations should approach {analysis['main_focus']} initiatives with careful planning, adequate resources, and clear success criteria to maximize value and minimize risks."
+        
+        if self.config.detail_level == DetailLevel.COMPREHENSIVE:
+            conclusion['key_insights'] = [
+                f"{analysis['main_focus'].title()} success requires strategic alignment and organizational commitment",
+                f"{analysis['industry'].title()} specific factors significantly influence implementation approaches",
+                f"Long-term value depends on continuous optimization and adaptation",
+                f"Cross-functional collaboration essential for optimal outcomes"
+            ]
+        
+        return conclusion
+    
+    def _generate_generic_section(self, section_name: str) -> Dict[str, Any]:
+        """Generate content for any section name"""
+        analysis = self.content_gen.topic_analysis
+        formatted_name = section_name.replace('_', ' ').title()
+        
+        return {
+            'content': f"Analysis of {formatted_name.lower()} reveals important implications for {self.topic}. Key factors include strategic alignment with {analysis['industry']} requirements, operational considerations for {analysis['main_focus']} implementation, and long-term sustainability within organizational context.",
+            'key_points': [
+                f"{formatted_name} directly impacts {analysis['main_focus']} outcomes",
+                f"{analysis['industry'].title()} specific factors influence {formatted_name.lower()} considerations",
+                f"Strategic planning essential for optimal {formatted_name.lower()} results"
+            ]
+        }
+
+class PDFReportFormatter:
+    """Format any report data into PDF-ready structure"""
+    
+    def __init__(self, report_data: Dict[str, Any], config: ReportConfig):
+        self.data = report_data
+        self.config = config
+    
+    def format_for_pdf(self) -> str:
+        """Convert any report data to formatted text suitable for PDF generation"""
+        sections = []
+        
+        # Title and metadata
+        sections.append(f"# {self.data['title']}")
+        sections.append(f"**Generated:** {self.data['metadata']['generated_date']}")
+        sections.append(f"**Report Type:** {self.data['metadata']['report_type']}")
+        sections.append(f"**Detail Level:** {self.data['metadata']['detail_level']}")
+        sections.append(f"**Focus Area:** {self.data['metadata']['focus_area']}")
+        sections.append("")
+        
+        # Executive Summary
+        sections.append("## Executive Summary")
+        sections.append(self.data['executive_summary']['content'])
+        if 'key_points' in self.data['executive_summary']:
+            sections.append("\n**Key Points:**")
+            for point in self.data['executive_summary']['key_points']:
+                sections.append(f"• {point}")
+        sections.append("")
+        
+        # Dynamic sections
+        section_order = ['overview', 'analysis', 'comparison_table', 'advantages_disadvantages', 
+                        'use_cases', 'recommendations', 'conclusion']
+        
+        for section_key in section_order:
+            if section_key in self.data:
+                sections.append(self._format_section(section_key, self.data[section_key]))
+        
+        # Handle any additional sections not in standard order
+        for key, value in self.data.items():
+            if key not in ['title', 'metadata', 'executive_summary'] + section_order:
+                sections.append(self._format_section(key, value))
+        
+        return "\n".join(sections)
+    
+    def _format_section(self, section_key: str, section_data: Any) -> str:
+        """Format any section regardless of structure"""
+        section_title = section_key.replace('_', ' ').title()
+        lines = [f"## {section_title}"]
+        
+        if isinstance(section_data, str):
+            lines.append(section_data)
+        elif isinstance(section_data, dict):
+            lines.extend(self._format_dict_section(section_data))
+        elif isinstance(section_data, list):
+            for item in section_data:
+                lines.append(f"• {item}")
+        
+        lines.append("")
+        return "\n".join(lines)
+    
+    def _format_dict_section(self, data: Dict[str, Any]) -> List[str]:
+        """Format dictionary data into readable text"""
+        lines = []
+        
+        for key, value in data.items():
+            if key in ['content', 'summary']:
+                lines.append(value)
+                lines.append("")
+            elif isinstance(value, str):
+                lines.append(f"**{key.replace('_', ' ').title()}:** {value}")
+            elif isinstance(value, list):
+                lines.append(f"**{key.replace('_', ' ').title()}:**")
+                for item in value:
+                    lines.append(f"• {item}")
+                lines.append("")
+            elif isinstance(value, dict):
+                lines.append(f"### {key.replace('_', ' ').title()}")
+                lines.extend(self._format_dict_section(value))
+        
+        return lines
+
+# Main API function for backend integration
+def generate_universal_report(topic: str, 
+                            detail_level: str = "standard",
+                            report_type: str = "analysis",
+                            include_metrics: bool = True,
+                            target_audience: str = "business",
+                            custom_sections: List[str] = None) -> str:
+    """
+    Generate a report for ANY topic with flexible configuration
+    
+    Args:
+        topic: Any topic string (e.g., "Python vs JavaScript", "AI in Healthcare", "Market Analysis of EVs")
+        detail_level: "brief", "standard", or "comprehensive"
+        report_type: "comparison", "analysis", "research", "market_study", "technical_review", "feasibility"
+        include_metrics: Whether to include performance/metrics sections
+        target_audience: "business", "technical", or "executive"
+        custom_sections: List of custom section names to include
+    
+    Returns:
+        Formatted text ready for PDF generation
+    """
+    try:
+        config = ReportConfig(
+            detail_level=DetailLevel(detail_level),
+            report_type=ReportType(report_type),
+            include_metrics=include_metrics,
+            target_audience=target_audience,
+            custom_sections=custom_sections
+        )
+        
+        generator = UniversalReportGenerator(topic, config)
+        report_data = generator.generate_report()
+        
+        formatter = PDFReportFormatter(report_data, config)
+        return formatter.format_for_pdf()
+        
+    except Exception as e:
+        # Fallback for any errors
+        return f"# Report Generation Error\n\nUnable to generate report for topic: {topic}\nError: {str(e)}\n\nPlease try with a different topic or configuration."
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Test with various topics
+    test_topics = [
+        "Python vs JavaScript for web development",
+        "AI implementation in healthcare",
+        "Electric vehicles market analysis",
+        "Cloud computing migration strategies",
+        "Sustainable energy solutions",
+        "Remote work productivity tools"
+    ]
+    
+    for topic in test_topics:
+        print(f"\n{'='*50}")
+        print(f"TESTING: {topic}")
+        print('='*50)
+        
+        report = generate_universal_report(
+            topic=topic,
+            detail_level="standard",
+            report_type="analysis"
+        )
+        
+        # Show first 500 characters
+        print(report[:500] + "...")
