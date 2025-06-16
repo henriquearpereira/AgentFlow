@@ -1,5 +1,5 @@
 """
-PDF Generation module for AI Research Agent - Enhanced Version with Fixed Formatting
+PDF Generation module for AI Research Agent - Enhanced Version with Fixed Constructor
 """
 
 import time
@@ -19,7 +19,16 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 class PDFGenerator:
     """Handles PDF report generation with enhanced formatting and fixed spacing"""
     
-    def __init__(self):
+    def __init__(self, report_data=None, config=None):
+        """
+        Initialize PDFGenerator with optional parameters to maintain compatibility
+        
+        Args:
+            report_data: Optional report data (for compatibility)
+            config: Optional configuration (for compatibility)
+        """
+        self.report_data = report_data
+        self.config = config
         self.styles = getSampleStyleSheet()
         self._setup_custom_styles()
         
@@ -249,6 +258,20 @@ class PDFGenerator:
         """Determine if a section should start on a new page"""
         title_lower = section_title.lower().strip()
         return any(keyword in title_lower for keyword in self.page_break_sections)
+    
+    def generate_pdf(self, content: str, filename: str, topic: str = None) -> bool:
+        """
+        Alternative method name for compatibility - calls create_pdf
+        
+        Args:
+            content: Report content in markdown format
+            filename: Output PDF filename  
+            topic: Optional topic for title extraction
+            
+        Returns:
+            bool: Success status
+        """
+        return self.create_pdf(content, filename, topic)
     
     def create_pdf(self, content: str, filename: str, topic: str = None) -> bool:
         """

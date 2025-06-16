@@ -234,6 +234,10 @@ async def test_model_connection(request: ModelTestRequest):
         provider = request.provider
         model_key = request.model_key
         
+        print(f"🧪 Testing model connection:")
+        print(f"   Provider: {provider}")
+        print(f"   Model Key: {model_key}")
+        
         if provider == "local":
             # For local models, just check if they can be initialized
             models = get_available_models()
@@ -246,21 +250,35 @@ async def test_model_connection(request: ModelTestRequest):
         api_key_var = f"{provider.upper()}_API_KEY"
         api_key = os.getenv(api_key_var)
         
+        print(f"🔑 API Key check for {api_key_var}: {'Present' if api_key else 'Missing'}")
+        
         if not api_key:
-            return {"success": False, "error": f"API key {api_key_var} not found"}
+            return {"success": False, "error": f"API key {api_key_var} not found in environment variables"}
         
         models = get_available_models()
         if provider not in models or model_key not in models[provider]:
-            return {"success": False, "error": "Model not found"}
+            return {"success": False, "error": f"Model {model_key} not found for provider {provider}"}
         
-        model_name = models[provider][model_key]["name"]
-        handler = APIModelHandler(provider, model_name, api_key)
+        model_config = models[provider][model_key]
+        actual_model_name = model_config["name"]
+        
+        print(f"📝 Model config: {model_config}")
+        
+        handler = APIModelHandler(
+            provider=provider, 
+            model_name=actual_model_name,  # Use actual model name
+            api_key=api_key,
+            verbose=True
+        )
+        
         result = handler.test_connection()
+        print(f"🔍 Test result: {result}")
         
         return result
         
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        print(f"❌ Model test error: {e}")
+        return {"success": False, "error": str(e), "error_type": type(e).__name__}
 
 @app.post("/api/query/analyze")
 async def analyze_query(request: QueryRefinementRequest):
@@ -318,6 +336,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         session_data = active_sessions[session_id]
         request_data = ResearchRequest(**session_data["request"])
         
+        print(f"🔄 Starting WebSocket research for session: {session_id}")
+        print(f"📋 Request: {request_data.provider}/{request_data.model_key}")
+        
         # Initialize progress tracker
         progress_tracker = ProgressTracker(session_id)
         
@@ -331,6 +352,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         # Execute research
         result = await execute_research(request_data, progress_tracker, session_id)
         
+        print(f"✅ Research completed: {result.get('success', False)}")
+        
         # Send final result
         await websocket.send_json({
             "type": "complete",
@@ -339,13 +362,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         })
         
     except WebSocketDisconnect:
+        print(f"🔌 WebSocket disconnected: {session_id}")
         manager.disconnect(session_id)
         if session_id in active_sessions:
             active_sessions[session_id]["status"] = "disconnected"
     except Exception as e:
+        print(f"❌ WebSocket error: {e}")
         await websocket.send_json({
             "type": "error",
             "message": str(e),
+            "error_type": type(e).__name__,
             "session_id": session_id
         })
     finally:
@@ -359,29 +385,51 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
         
         await progress_tracker.update("Initializing model handler...", 10)
         
-        # Create model handler
+        # Create model handler - FIXED
         if request.provider == "local":
             model_handler = LocalModelHandler(
                 model_key=request.model_key,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
-                verbose=False
+                verbose=True  # Enable verbose mode for debugging
             )
         else:
             api_key_var = f"{request.provider.upper()}_API_KEY"
             api_key = os.getenv(api_key_var)
             
             if not api_key:
-                raise ValueError(f"API key {api_key_var} not found")
+                raise ValueError(f"API key {api_key_var} not found in environment variables")
+            
+            # Get model configuration
+            models = get_available_models()
+            if request.provider not in models or request.model_key not in models[request.provider]:
+                raise ValueError(f"Model {request.model_key} not found for provider {request.provider}")
+            
+            model_config = models[request.provider][request.model_key]
+            actual_model_name = model_config["name"]
+            
+            print(f"🔧 Creating API handler:")
+            print(f"   Provider: {request.provider}")
+            print(f"   Model Key: {request.model_key}")
+            print(f"   Actual Model Name: {actual_model_name}")
+            print(f"   API Key Present: {'Yes' if api_key else 'No'}")
             
             model_handler = APIModelHandler(
                 provider=request.provider,
-                model_name=request.model_key,
+                model_name=actual_model_name,  # Use the actual model name from config
                 api_key=api_key,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
-                verbose=False
+                verbose=True  # Enable verbose mode for debugging
             )
+            
+            # Test the connection immediately
+            print("🧪 Testing API connection...")
+            test_result = model_handler.test_connection()
+            print(f"🔍 Connection test result: {test_result}")
+            
+            if not test_result.get("success", False):
+                raise ValueError(f"API connection test failed: {test_result.get('error', 'Unknown error')}")
         
         await progress_tracker.update("Setting up research agent...", 20)
         
@@ -435,6 +483,9 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
         }
         
     except Exception as e:
+        print(f"❌ Research execution error: {e}")
+        print(f"📋 Error type: {type(e).__name__}")
+        
         active_sessions[session_id]["status"] = "error"
         active_sessions[session_id]["error"] = str(e)
         
@@ -442,7 +493,8 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
         
         return {
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "error_type": type(e).__name__
         }
     finally:
         # Cleanup
