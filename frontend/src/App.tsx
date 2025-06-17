@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Settings, Download, AlertCircle, CheckCircle2, Loader2, Brain, FileText, Clock, Zap } from 'lucide-react';
+import { Search, Settings, Download, AlertCircle, CheckCircle2, Loader2, Brain, FileText, Clock, Zap, Star, Code, BookOpen, Cpu, CheckCircle, HardDrive } from 'lucide-react';
 import './App.css';
+
+// Add NodeJS namespace
+declare global {
+  namespace NodeJS {
+    type Timeout = number;
+  }
+}
 
 // Types
 interface Model {
@@ -8,6 +15,7 @@ interface Model {
   provider: string;
   description?: string;
   api_key_available?: boolean;
+  best_for?: string;
 }
 
 interface Models {
@@ -35,6 +43,310 @@ interface ProgressUpdate {
   message?: string;
   result?: any;
 }
+
+// Enhanced Model Selection Component
+const EnhancedModelSelector = ({ 
+  models, 
+  selectedProvider, 
+  selectedModel, 
+  setSelectedProvider, 
+  setSelectedModel,
+  query,
+  isLoading 
+}: {
+  models: Models;
+  selectedProvider: string;
+  selectedModel: string;
+  setSelectedProvider: (provider: string) => void;
+  setSelectedModel: (model: string) => void;
+  query: string;
+  isLoading: boolean;
+}) => {
+  const [autoSelectEnabled, setAutoSelectEnabled] = useState(true);
+  const [recommendedModel, setRecommendedModel] = useState('');
+
+  // Auto-select best model based on query
+  useEffect(() => {
+    if (autoSelectEnabled && query && models.groq) {
+      const recommended = autoSelectModel(query);
+      setRecommendedModel(recommended);
+      
+      if (selectedProvider === 'groq' && recommended !== selectedModel) {
+        setSelectedModel(recommended);
+      }
+    }
+  }, [query, autoSelectEnabled, models, selectedProvider]);
+
+  const autoSelectModel = (query: string) => {
+    const queryWords = query.split(' ').length;
+    const queryLower = query.toLowerCase();
+    
+    // Technical queries
+    if (queryLower.includes('code') || queryLower.includes('programming') || queryLower.includes('software')) {
+      return 'mixtral-8x7b-32768';
+    }
+    // Academic/research queries
+    else if (queryLower.includes('research') || queryLower.includes('analysis') || queryLower.includes('study')) {
+      return 'llama-3.2-90b-text-preview';
+    }
+    // Long complex queries
+    else if (queryWords > 30) {
+      return 'llama-3.1-70b-versatile';
+    }
+    // Medium queries
+    else if (queryWords > 10) {
+      return 'llama-3.1-70b-versatile';
+    }
+    // Quick queries
+    else {
+      return 'llama-3.1-8b-instant';
+    }
+  };
+
+  const getModelIcon = (modelKey: string) => {
+    if (modelKey.includes('70b') || modelKey.includes('90b')) return <Star className="w-4 h-4 text-yellow-400" />;
+    if (modelKey.includes('mixtral')) return <Code className="w-4 h-4 text-purple-400" />;
+    if (modelKey.includes('instant')) return <Zap className="w-4 h-4 text-blue-400" />;
+    if (modelKey.includes('gemma')) return <Cpu className="w-4 h-4 text-green-400" />;
+    return <Brain className="w-4 h-4 text-gray-400" />;
+  };
+
+  const getQualityBadge = (modelName: string) => {
+    if (modelName.includes('⭐')) return 'premium';
+    if (modelName.includes('🚀') || modelName.includes('⚡') || modelName.includes('💻')) return 'standard';
+    return 'basic';
+  };
+
+  const getQualityColor = (quality: string) => {
+    switch (quality) {
+      case 'premium': return 'border-yellow-500/50 bg-yellow-500/10 text-yellow-300';
+      case 'standard': return 'border-blue-500/50 bg-blue-500/10 text-blue-300';
+      default: return 'border-gray-500/50 bg-gray-500/10 text-gray-300';
+    }
+  };
+
+  // Check if provider is local (doesn't require API key)
+  const isLocalProvider = (provider: string) => {
+    return provider === 'local' || provider === 'ollama' || provider === 'lmstudio';
+  };
+
+  // Get API key status for the selected provider
+  const getApiKeyStatus = () => {
+    if (!selectedProvider) return null;
+    
+    if (isLocalProvider(selectedProvider)) {
+      return {
+        available: true,
+        isLocal: true,
+        message: 'Local Model - No API Key Required'
+      };
+    }
+    
+    // For external providers, check if API key is available
+    const firstModel = models[selectedProvider] && Object.values(models[selectedProvider])[0];
+    return {
+      available: firstModel?.api_key_available || false,
+      isLocal: false,
+      message: firstModel?.api_key_available ? 'API Key Configured' : 'API Key Required'
+    };
+  };
+
+  const apiKeyStatus = getApiKeyStatus();
+
+  return (
+    <div className="space-y-6">
+      {/* Auto-Select Toggle */}
+      <div className="flex items-center justify-between p-4 bg-black/20 rounded-xl border border-white/20">
+        <div className="flex items-center space-x-3">
+          <Brain className="w-5 h-5 text-blue-400" />
+          <div>
+            <h3 className="text-white font-medium">Smart Model Selection</h3>
+            <p className="text-gray-400 text-sm">Automatically choose the best model for your query</p>
+          </div>
+        </div>
+        <label className="relative inline-flex items-center cursor-pointer">
+          <input
+            type="checkbox"
+            checked={autoSelectEnabled}
+            onChange={(e) => setAutoSelectEnabled(e.target.checked)}
+            className="sr-only"
+            disabled={isLoading}
+          />
+          <div className={`w-11 h-6 rounded-full ${autoSelectEnabled ? 'bg-blue-600' : 'bg-gray-600'} relative transition-colors`}>
+            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform ${autoSelectEnabled ? 'translate-x-6' : 'translate-x-1'}`}></div>
+          </div>
+        </label>
+      </div>
+
+      {/* Recommended Model Alert */}
+      {autoSelectEnabled && recommendedModel && query && (
+        <div className="flex items-center p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
+          <CheckCircle className="w-5 h-5 text-green-400 mr-3" />
+          <div>
+            <p className="text-green-300 font-medium">Recommended Model</p>
+            <p className="text-green-200 text-sm">
+              {models.groq?.[recommendedModel]?.name || recommendedModel} - Best fit for your query
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Provider Selection */}
+      <div>
+        <label className="block text-white text-sm font-medium mb-3">
+          AI Provider
+        </label>
+        <select
+          value={selectedProvider}
+          onChange={(e) => {
+            setSelectedProvider(e.target.value);
+            if (e.target.value === 'groq' && autoSelectEnabled && recommendedModel) {
+              setSelectedModel(recommendedModel);
+            } else {
+              const firstModel = Object.keys(models[e.target.value] || {})[0];
+              setSelectedModel(firstModel || '');
+            }
+          }}
+          className="w-full px-4 py-3 bg-black/20 border border-white/30 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          disabled={isLoading}
+        >
+          <option value="">Select Provider</option>
+          {Object.keys(models).map(provider => (
+            <option key={provider} value={provider}>
+              {provider === 'groq' ? '🚀 Groq (Recommended)' : 
+               provider === 'local' ? '💻 Local Models' :
+               provider === 'ollama' ? '🏠 Ollama' :
+               provider === 'lmstudio' ? '🖥️ LM Studio' : 
+               provider}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Enhanced Model Selection */}
+      {selectedProvider && (
+        <div>
+          <label className="block text-white text-sm font-medium mb-3">
+            Model Selection
+          </label>
+          <div className="space-y-3">
+            {selectedProvider && models[selectedProvider] && 
+              Object.entries(models[selectedProvider]).map(([key, model]) => {
+                const quality = getQualityBadge(model.name);
+                const isSelected = selectedModel === key;
+                const isRecommended = key === recommendedModel;
+                
+                return (
+                  <div
+                    key={key}
+                    className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                      isSelected 
+                        ? 'border-blue-500 bg-blue-500/10' 
+                        : isRecommended
+                        ? 'border-green-500/50 bg-green-500/5'
+                        : 'border-white/20 bg-black/10 hover:border-white/40'
+                    }`}
+                    onClick={() => !isLoading && setSelectedModel(key)}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2 mb-2">
+                          {getModelIcon(key)}
+                          <h3 className="text-white font-medium">{model.name}</h3>
+                          {isRecommended && (
+                            <span className="px-2 py-1 bg-green-500/20 text-green-300 text-xs rounded-full border border-green-500/30">
+                              Recommended
+                            </span>
+                          )}
+                          <span className={`px-2 py-1 text-xs rounded-full border ${getQualityColor(quality)}`}>
+                            {quality}
+                          </span>
+                        </div>
+                        <p className="text-gray-300 text-sm mb-2">{model.description}</p>
+                        {model.best_for && (
+                          <p className="text-gray-400 text-xs">
+                            <strong>Best for:</strong> {model.best_for}
+                          </p>
+                        )}
+                      </div>
+                      <div className="ml-4">
+                        <input
+                          type="radio"
+                          checked={isSelected}
+                          onChange={() => setSelectedModel(key)}
+                          className="w-4 h-4 text-blue-600"
+                          disabled={isLoading}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            }
+          </div>
+        </div>
+      )}
+
+      {/* Model Comparison */}
+      {selectedProvider === 'groq' && (
+        <div className="bg-black/20 rounded-xl p-4 border border-white/20">
+          <h3 className="text-white font-medium mb-3 flex items-center">
+            <Brain className="w-4 h-4 mr-2" />
+            Model Comparison
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div className="text-center">
+              <div className="text-yellow-400 font-medium mb-1">Premium Models</div>
+              <div className="text-gray-300">
+                • Best quality<br/>
+                • Complex analysis<br/>
+                • Detailed reports
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="text-blue-400 font-medium mb-1">Standard Models</div>
+              <div className="text-gray-300">
+                • Good balance<br/>
+                • Fast processing<br/>
+                • General research
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="text-gray-400 font-medium mb-1">Basic Models</div>
+              <div className="text-gray-300">
+                • Ultra fast<br/>
+                • Simple queries<br/>
+                • Quick testing
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* API Key Status */}
+      {apiKeyStatus && (
+        <div className="flex items-center p-3 bg-black/20 rounded-xl border border-white/20">
+          {apiKeyStatus.isLocal ? (
+            <>
+              <HardDrive className="w-4 h-4 text-blue-400 mr-2" />
+              <span className="text-blue-300 text-sm">{apiKeyStatus.message}</span>
+            </>
+          ) : apiKeyStatus.available ? (
+            <>
+              <CheckCircle className="w-4 h-4 text-green-400 mr-2" />
+              <span className="text-green-300 text-sm">{apiKeyStatus.message}</span>
+            </>
+          ) : (
+            <>
+              <AlertCircle className="w-4 h-4 text-yellow-400 mr-2" />
+              <span className="text-yellow-300 text-sm">{apiKeyStatus.message}</span>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const App: React.FC = () => {
   // State management
@@ -248,7 +560,9 @@ const App: React.FC = () => {
       'openai': 'OpenAI',
       'anthropic': 'Anthropic',
       'google': 'Google',
-      'groq': 'Groq'
+      'groq': 'Groq',
+      'ollama': 'Ollama',
+      'lmstudio': 'LM Studio'
     };
     return names[provider] || provider;
   };
@@ -292,51 +606,15 @@ const App: React.FC = () => {
             </div>
 
             {/* Model Selection */}
-            <div className="grid md:grid-cols-2 gap-6 mb-6">
-              <div>
-                <label className="block text-white text-sm font-medium mb-2">
-                  AI Provider
-                </label>
-                <select
-                  value={selectedProvider}
-                  onChange={(e) => {
-                    setSelectedProvider(e.target.value);
-                    const firstModel = Object.keys(models[e.target.value] || {})[0];
-                    setSelectedModel(firstModel || '');
-                  }}
-                  className="w-full px-4 py-3 bg-black/20 border border-white/30 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  disabled={isLoading}
-                >
-                  <option value="">Select Provider</option>
-                  {Object.keys(models).map(provider => (
-                    <option key={provider} value={provider}>
-                      {getProviderName(provider)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-white text-sm font-medium mb-2">
-                  Model
-                </label>
-                <select
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  className="w-full px-4 py-3 bg-black/20 border border-white/30 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  disabled={isLoading || !selectedProvider}
-                >
-                  <option value="">Select Model</option>
-                  {selectedProvider && models[selectedProvider] && 
-                    Object.entries(models[selectedProvider]).map(([key, model]) => (
-                      <option key={key} value={key}>
-                        {model.name}
-                      </option>
-                    ))
-                  }
-                </select>
-              </div>
-            </div>
+            <EnhancedModelSelector
+              models={models}
+              selectedProvider={selectedProvider}
+              selectedModel={selectedModel}
+              setSelectedProvider={setSelectedProvider}
+              setSelectedModel={setSelectedModel}
+              query={query}
+              isLoading={isLoading}
+            />
 
             {/* Advanced Settings */}
             <div className="mb-6">
