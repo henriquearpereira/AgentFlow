@@ -72,6 +72,7 @@ class ResearchRequest(BaseModel):
     query: str
     provider: str
     model_key: str
+    search_engine: str
     max_tokens: Optional[int] = 500
     temperature: Optional[float] = 0.2
     output_filename: Optional[str] = None
@@ -385,13 +386,13 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
         
         await progress_tracker.update("Initializing model handler...", 10)
         
-        # Create model handler - FIXED
+        # Create model handler
         if request.provider == "local":
             model_handler = LocalModelHandler(
                 model_key=request.model_key,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
-                verbose=True  # Enable verbose mode for debugging
+                verbose=True
             )
         else:
             api_key_var = f"{request.provider.upper()}_API_KEY"
@@ -400,7 +401,6 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
             if not api_key:
                 raise ValueError(f"API key {api_key_var} not found in environment variables")
             
-            # Get model configuration
             models = get_available_models()
             if request.provider not in models or request.model_key not in models[request.provider]:
                 raise ValueError(f"Model {request.model_key} not found for provider {request.provider}")
@@ -408,26 +408,16 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
             model_config = models[request.provider][request.model_key]
             actual_model_name = model_config["name"]
             
-            print(f"🔧 Creating API handler:")
-            print(f"   Provider: {request.provider}")
-            print(f"   Model Key: {request.model_key}")
-            print(f"   Actual Model Name: {actual_model_name}")
-            print(f"   API Key Present: {'Yes' if api_key else 'No'}")
-            
             model_handler = APIModelHandler(
                 provider=request.provider,
-                model_name=actual_model_name,  # Use the actual model name from config
+                model_name=actual_model_name,
                 api_key=api_key,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
-                verbose=True  # Enable verbose mode for debugging
+                verbose=True
             )
             
-            # Test the connection immediately
-            print("🧪 Testing API connection...")
             test_result = model_handler.test_connection()
-            print(f"🔍 Connection test result: {test_result}")
-            
             if not test_result.get("success", False):
                 raise ValueError(f"API connection test failed: {test_result.get('error', 'Unknown error')}")
         
@@ -436,13 +426,11 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
         # Create research agent
         agent = EnhancedResearchAgent(model_handler)
         
-        # Set up async progress callback
-        async def progress_callback(message: str, percentage: int):
-            await progress_tracker.update(message, percentage)
+        # Set up progress callback (agent supports both sync/async, ProgressTracker.update is async)
+        # agent._update_progress will handle coroutine detection
+        agent.set_progress_callback(progress_tracker.update)
         
-        agent.set_progress_callback(progress_callback)
-        
-        # Generate output filename - FIXED: Use just the filename without directory
+        # Generate output filename
         if request.output_filename:
             output_filename = request.output_filename
         else:
@@ -451,18 +439,15 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
         # Ensure reports directory exists
         reports_dir = Path("reports")
         reports_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Full path for the research agent
         output_path = reports_dir / output_filename
         
         await progress_tracker.update("Starting research process...", 30)
         
-        # Execute research (this will need to be made async in your research agent)
-        results = await asyncio.get_event_loop().run_in_executor(
-            None, 
-            agent.conduct_research, 
-            request.query, 
-            str(output_path)
+        # Run the research asynchronously (conduct_research is now async)
+        results = await agent.conduct_research(
+            request.query,
+            str(output_path),
+            search_source=request.search_engine
         )
         
         await progress_tracker.update("Research completed!", 100)
@@ -471,10 +456,9 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
         active_sessions[session_id]["status"] = "completed"
         active_sessions[session_id]["results"] = results
         
-        # FIXED: Return just the filename for download
         return {
             "success": True,
-            "report_path": output_filename,  # Just the filename, not the full path
+            "report_path": output_filename,
             "categories": results.get("categories", []),
             "report_structure": results.get("report_structure", []),
             "timing": results.get("timing", {}),
@@ -497,7 +481,6 @@ async def execute_research(request: ResearchRequest, progress_tracker: ProgressT
             "error_type": type(e).__name__
         }
     finally:
-        # Cleanup
         if 'model_handler' in locals():
             model_handler.cleanup()
 

@@ -1,12 +1,13 @@
-"""API-based model implementations - FIXED VERSION"""
+"""API-based model implementations - UPDATED VERSION with better Groq models"""
 
 import os
 import requests
 import time
+import json
 from typing import Optional, Dict, Any
 
 class APIModelHandler:
-    def __init__(self, provider: str, model_name: str, api_key: str, max_tokens: int = 500, temperature: float = 0.2, verbose: bool = False):
+    def __init__(self, provider: str, model_name: str, api_key: str, max_tokens: int = 2000, temperature: float = 0.3, verbose: bool = False):
         self.provider = provider
         self.model_name = model_name
         self.api_key = api_key
@@ -14,6 +15,7 @@ class APIModelHandler:
         self.temperature = temperature
         self.verbose = verbose
         self.client = None
+        self.system_prompt = None  # Allow custom system prompts
         
         if self.verbose:
             print(f"🔧 Initializing {provider} handler with model: {model_name}")
@@ -95,6 +97,15 @@ class APIModelHandler:
             "Content-Type": "application/json"
         }
     
+    def set_parameters(self, temperature: float = None, max_tokens: int = None, system_prompt: str = None):
+        """Set model parameters dynamically"""
+        if temperature is not None:
+            self.temperature = temperature
+        if max_tokens is not None:
+            self.max_tokens = max_tokens
+        if system_prompt is not None:
+            self.system_prompt = system_prompt
+    
     def generate(self, prompt: str, max_tokens: Optional[int] = None, temperature: Optional[float] = None, **kwargs) -> str:
         """Generate text using the configured API"""
         # Use instance defaults if not provided
@@ -126,9 +137,36 @@ class APIModelHandler:
         """Generate using OpenAI-compatible APIs (Groq, Together, OpenRouter)"""
         url = f"{self.base_url}/chat/completions"
         
+        # Use custom system prompt if provided, otherwise use enhanced default
+        if self.system_prompt:
+            system_prompt = self.system_prompt
+        else:
+            system_prompt = """You are an expert research analyst and technical writer with deep domain knowledge across multiple fields. Your task is to create comprehensive, intelligent, and well-structured content that demonstrates deep understanding and provides valuable insights.
+
+Key capabilities:
+1. **Deep Reasoning**: Analyze complex topics with sophisticated understanding
+2. **Original Insights**: Generate novel perspectives and forward-thinking analysis
+3. **Comprehensive Coverage**: Address multiple dimensions (technical, business, social, ethical)
+4. **Specific Examples**: Provide concrete cases, technologies, companies, and methodologies
+5. **Actionable Recommendations**: Offer practical strategies and next steps
+6. **Future-Focused**: Consider emerging trends and breakthrough opportunities
+
+Quality standards:
+- Write in professional, analytical tone with original insights
+- Avoid generic placeholder language - be specific and detailed
+- Include specific data points, technologies, and examples where relevant
+- Provide balanced, objective analysis with multiple perspectives
+- Structure content logically with clear sections and flow
+- Demonstrate deep domain knowledge and understanding
+- Consider global and local market dynamics
+- Address both current state and future potential
+
+Your responses should showcase intelligence, creativity, and practical value."""
+        
         payload = {
             "model": self.model_name,
             "messages": [
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
             "max_tokens": max_tokens,
@@ -146,32 +184,29 @@ class APIModelHandler:
                 url, 
                 headers=self.headers, 
                 json=payload, 
-                timeout=60
+                timeout=120  # Increased timeout for larger models
             )
-            
             if self.verbose:
                 print(f"📡 Response status: {response.status_code}")
-            
             response.raise_for_status()
             result = response.json()
-            
             if self.verbose:
                 print(f"📄 Response keys: {list(result.keys())}")
-            
             if 'choices' in result and len(result['choices']) > 0:
                 content = result['choices'][0]['message']['content']
-                if self.verbose:
-                    print(f"✅ Generated {len(content)} characters")
                 return content.strip()
             else:
                 raise Exception(f"No choices in response: {result}")
-                
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Request failed: {e}")
-        except KeyError as e:
-            raise Exception(f"Unexpected response format, missing key: {e}")
+        except requests.exceptions.HTTPError as e:
+            print(f"❌ API generation error ({self.provider}): {e}")
+            print(f"🔎 Payload sent: {json.dumps(payload, indent=2)}")
+            if e.response is not None:
+                print(f"🔎 Error response body: {e.response.text}")
+            raise
         except Exception as e:
-            raise Exception(f"OpenAI-compatible API error: {e}")
+            print(f"❌ API generation error ({self.provider}): {e}")
+            print(f"🔎 Payload sent: {json.dumps(payload, indent=2)}")
+            raise
     
     def _generate_huggingface(self, prompt: str, max_tokens: int, temperature: float, **kwargs) -> str:
         """Generate using Hugging Face Inference API"""
@@ -288,3 +323,49 @@ Unable to generate AI response due to API connectivity issues. Please check:
         if self.verbose:
             print(f"🧹 Cleaning up {self.provider} handler")
         pass
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get information about the current model configuration"""
+        return {
+            "handler_type": "APIModelHandler",
+            "provider": self.provider,
+            "model": self.model_name,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "system_prompt": self.system_prompt[:100] + "..." if self.system_prompt and len(self.system_prompt) > 100 else self.system_prompt,
+            "verbose": self.verbose
+        }
+
+    async def generate_async(self, prompt: str) -> str:
+        """Async version of generate"""
+        return self.generate(prompt)
+
+# Recommended model configurations for better performance
+RECOMMENDED_GROQ_MODELS = {
+    "best_quality": "llama-3.3-70b-versatile",  # Highest quality, slower
+    "balanced": "llama-3.1-8b-instant",         # Good balance of speed and quality
+    "experimental": "compound-beta",             # Latest model, high quality
+    "specialized": "compound-beta",              # Good for complex reasoning and code
+    "technical": "gemma2-9b-it",                # Specialized for technical content
+    "fast": "llama-3.1-8b-instant"              # Ultra-fast for basic tasks
+}
+
+def get_recommended_model(use_case: str = "balanced") -> str:
+    """Get recommended model based on use case"""
+    return RECOMMENDED_GROQ_MODELS.get(use_case, "llama-3.1-8b-instant")
+
+# Example usage with better model
+# if __name__ == "__main__":
+#     # Use the better 70B model for higher quality
+#     model = APIModelHandler(
+#         provider="groq",
+#         model_name="llama-3.1-70b-versatile",
+#         api_key=os.getenv("GROQ_API_KEY"),
+#         max_tokens=2000,
+#         temperature=0.3,
+#         verbose=True
+#     )
+#     
+#     # Test connection
+#     result = model.test_connection()
+#     print(f"Connection test: {result}")

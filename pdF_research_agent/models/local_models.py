@@ -540,3 +540,7 @@ Strong demand for AI/ML talent in Netherlands with salaries increasing year-over
     def __repr__(self):
         """Detailed representation of the handler"""
         return f"LocalModelHandler(model_key='{self.model_key}', model_name='{self.model_name}', max_tokens={self.max_tokens}, temperature={self.temperature})"
+
+    async def generate_async(self, prompt: str) -> str:
+        """Async version of generate"""
+        return self.generate(prompt)

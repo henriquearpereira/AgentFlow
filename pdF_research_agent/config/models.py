@@ -1,5 +1,9 @@
 """Model configuration and definitions"""
 
+import os
+import requests
+from typing import Dict, Any
+
 MODEL_CONFIGS = {
     # Local Models
     "local": {
@@ -189,17 +193,170 @@ MODEL_CONFIGS = {
 
 # Model selection recommendations based on research type
 RESEARCH_TYPE_RECOMMENDATIONS = {
-    "academic": ["llama-3.2-90b-text-preview", "llama-3.1-70b-versatile"],
-    "technical": ["mixtral-8x7b-32768", "gemma2-9b-it", "llama-3.1-70b-versatile"],
-    "business": ["llama-3.1-70b-versatile", "llama-3.2-90b-text-preview"],
-    "quick_facts": ["llama-3.1-8b-instant", "llama-3.2-3b-preview"],
-    "comprehensive": ["llama-3.1-70b-versatile", "mixtral-8x7b-32768"],
-    "multilingual": ["mixtral-8x7b-32768", "llama-3.1-70b-versatile"]
+    "academic": ["llama-3.3-70b-versatile", "qwen/qwen3-32b", "compound-beta"],
+    "technical": ["compound-beta", "gemma2-9b-it", "llama-3.3-70b-versatile"],
+    "business": ["llama-3.3-70b-versatile", "qwen/qwen3-32b"],
+    "quick_facts": ["llama-3.1-8b-instant", "llama3-8b-8192"],
+    "comprehensive": ["llama-3.3-70b-versatile", "compound-beta"],
+    "multilingual": ["compound-beta", "llama-3.3-70b-versatile"]
 }
+
+def fetch_groq_models() -> Dict[str, Any]:
+    """Fetch real models from Groq API"""
+    try:
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            print("⚠️ GROQ_API_KEY not found, using fallback models")
+            return get_fallback_groq_models()
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.get("https://api.groq.com/openai/v1/models", headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        models = {}
+        
+        for model_data in data.get("data", []):
+            model_id = model_data.get("id")
+            if not model_id:
+                continue
+                
+            # Skip non-text models (like Whisper for speech)
+            if "whisper" in model_id.lower() or "tts" in model_id.lower():
+                continue
+                
+            # Determine quality tier based on model characteristics
+            context_window = model_data.get("context_window", 0)
+            owned_by = model_data.get("owned_by", "")
+            
+            if context_window >= 131072:
+                quality_tier = "premium"
+                estimated_time = "3-8s"
+            elif context_window >= 32768:
+                quality_tier = "premium"
+                estimated_time = "4-10s"
+            elif context_window >= 8192:
+                quality_tier = "standard"
+                estimated_time = "2-5s"
+            else:
+                quality_tier = "basic"
+                estimated_time = "1-3s"
+            
+            # Determine best use cases
+            best_for = []
+            if "70b" in model_id or "90b" in model_id or context_window >= 32768:
+                best_for.extend(["research", "analysis", "detailed_reports"])
+            if "mixtral" in model_id or "compound" in model_id:
+                best_for.extend(["code_analysis", "multilingual_content"])
+            if "instant" in model_id or "3b" in model_id:
+                best_for.extend(["quick_summaries", "factual_queries"])
+            if "gemma" in model_id:
+                best_for.extend(["technical_research", "software_development"])
+            if not best_for:
+                best_for = ["general_research", "content_generation"]
+            
+            # Create model description
+            description_parts = []
+            if "llama" in model_id:
+                description_parts.append("Llama model")
+            elif "gemma" in model_id:
+                description_parts.append("Gemma model")
+            elif "mixtral" in model_id:
+                description_parts.append("Mixtral model")
+            elif "compound" in model_id:
+                description_parts.append("Compound model")
+            elif "qwen" in model_id:
+                description_parts.append("Qwen model")
+            
+            if context_window >= 131072:
+                description_parts.append("with ultra-large context window")
+            elif context_window >= 32768:
+                description_parts.append("with large context window")
+            
+            if "instant" in model_id:
+                description_parts.append("- optimized for speed")
+            elif "70b" in model_id or "90b" in model_id:
+                description_parts.append("- high quality output")
+            
+            description = " ".join(description_parts) + f" ({context_window:,} tokens)"
+            
+            models[model_id] = {
+                "name": model_id,
+                "description": description,
+                "estimated_time": estimated_time,
+                "cost": "Free tier: 14,400 requests/day",
+                "quality": quality_tier.title(),
+                "max_tokens": min(8000, context_window // 2),  # Conservative max tokens
+                "recommended_temperature": 0.2 if "instant" in model_id else 0.1,
+                "best_for": best_for,
+                "quality_tier": quality_tier,
+                "memory_usage": "Low" if "instant" in model_id or "3b" in model_id else "Medium",
+                # Add API response fields
+                "id": model_id,
+                "object": model_data.get("object"),
+                "created": model_data.get("created"),
+                "owned_by": owned_by,
+                "active": model_data.get("active", True),
+                "context_window": context_window,
+                "public_apps": model_data.get("public_apps"),
+                "max_completion_tokens": model_data.get("max_completion_tokens")
+            }
+        
+        print(f"✅ Fetched {len(models)} models from Groq API")
+        return models
+        
+    except Exception as e:
+        print(f"❌ Failed to fetch Groq models: {e}")
+        print("⚠️ Using fallback models")
+        return get_fallback_groq_models()
+
+def get_fallback_groq_models() -> Dict[str, Any]:
+    """Fallback models when API is unavailable"""
+    return {
+        "llama-3.1-8b-instant": {
+            "name": "llama-3.1-8b-instant",
+            "description": "Llama 3.1 8B Instant - Fast and efficient for quick research tasks",
+            "estimated_time": "2-5s",
+            "cost": "Free tier: 14,400 requests/day",
+            "quality": "Excellent",
+            "max_tokens": 8000,
+            "recommended_temperature": 0.2,
+            "best_for": ["quick_summaries", "factual_queries", "structured_output"],
+            "quality_tier": "standard",
+            "memory_usage": "Low",
+            "context_window": 131072,
+            "owned_by": "Meta",
+            "active": True
+        },
+        "llama-3.3-70b-versatile": {
+            "name": "llama-3.3-70b-versatile",
+            "description": "Llama 3.3 70B Versatile - Most capable model for complex research and analysis",
+            "estimated_time": "3-8s",
+            "cost": "Free tier: 14,400 requests/day",
+            "quality": "Premium",
+            "max_tokens": 8000,
+            "recommended_temperature": 0.1,
+            "best_for": ["research", "analysis", "detailed_reports", "technical_content"],
+            "quality_tier": "premium",
+            "memory_usage": "Medium",
+            "context_window": 131072,
+            "owned_by": "Meta",
+            "active": True
+        }
+    }
 
 def get_available_models():
     """Get all available models organized by provider"""
-    return MODEL_CONFIGS
+    models = MODEL_CONFIGS.copy()
+    
+    # Fetch real Groq models from API
+    models["groq"] = fetch_groq_models()
+    
+    return models
 
 def get_model_info(provider, model_key):
     """Get specific model information"""
@@ -238,10 +395,27 @@ def get_recommended_groq_model(query: str, research_type: str = None) -> str:
             research_type = "comprehensive"
     
     # Get recommendations for the research type
-    recommended_models = RESEARCH_TYPE_RECOMMENDATIONS.get(research_type, ["llama-3.1-70b-versatile"])
+    recommended_models = RESEARCH_TYPE_RECOMMENDATIONS.get(research_type, ["llama-3.3-70b-versatile"])
     
-    # Return the first available model
-    return recommended_models[0]
+    # Get available models to check if recommendations exist
+    available_models = fetch_groq_models()
+    
+    # Return the first available recommended model, or fallback to a known good model
+    for model_id in recommended_models:
+        if model_id in available_models:
+            return model_id
+    
+    # Fallback to best available model
+    fallback_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "compound-beta"]
+    for model_id in fallback_models:
+        if model_id in available_models:
+            return model_id
+    
+    # If nothing is available, return the first model
+    if available_models:
+        return list(available_models.keys())[0]
+    
+    return "llama-3.1-8b-instant"  # Ultimate fallback
 
 def get_enhanced_groq_config(model_key: str) -> dict:
     """
