@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Settings, Download, AlertCircle, CheckCircle2, Loader2, Brain, FileText, Clock, Zap, Star, Code, BookOpen, Cpu, CheckCircle, HardDrive } from 'lucide-react';
+import { Search, Settings, Download, AlertCircle, CheckCircle2, Loader2, Brain, FileText, Clock, Zap, Star, Code, BookOpen, Cpu, CheckCircle, HardDrive, Search as SearchIcon, BarChart3 } from 'lucide-react';
 import './App.css';
 
 // Add NodeJS namespace
@@ -15,7 +15,22 @@ interface Model {
   provider: string;
   description?: string;
   api_key_available?: boolean;
-  best_for?: string;
+  best_for?: string[];
+  estimated_time?: string;
+  cost?: string;
+  quality?: string;
+  max_tokens?: number;
+  recommended_temperature?: number;
+  quality_tier?: string;
+  memory_usage?: string;
+  id?: string;
+  object?: string;
+  created?: number;
+  owned_by?: string;
+  active?: boolean;
+  context_window?: number;
+  public_apps?: any;
+  max_completion_tokens?: number;
 }
 
 interface Models {
@@ -28,6 +43,7 @@ interface ResearchRequest {
   query: string;
   provider: string;
   model_key: string;
+  search_engine: string;
   max_tokens?: number;
   temperature?: number;
   output_filename?: string;
@@ -64,6 +80,8 @@ const EnhancedModelSelector = ({
 }) => {
   const [autoSelectEnabled, setAutoSelectEnabled] = useState(true);
   const [recommendedModel, setRecommendedModel] = useState('');
+  const [filterQuality, setFilterQuality] = useState<string>('all');
+  const [filterContext, setFilterContext] = useState<string>('all');
 
   // Auto-select best model based on query
   useEffect(() => {
@@ -77,28 +95,100 @@ const EnhancedModelSelector = ({
     }
   }, [query, autoSelectEnabled, models, selectedProvider]);
 
+  // Filter models based on selected criteria
+  const getFilteredModels = () => {
+    if (!selectedProvider || !models[selectedProvider]) return [];
+    
+    let filtered = Object.entries(models[selectedProvider]);
+    
+    // Filter by quality tier
+    if (filterQuality !== 'all') {
+      filtered = filtered.filter(([key, model]) => model.quality_tier === filterQuality);
+    }
+    
+    // Filter by context window
+    if (filterContext !== 'all') {
+      const contextThresholds = {
+        'ultra': 131072,
+        'high': 32768,
+        'medium': 8192,
+        'basic': 0
+      };
+      const threshold = contextThresholds[filterContext as keyof typeof contextThresholds];
+      filtered = filtered.filter(([key, model]) => 
+        model.context_window && model.context_window >= threshold
+      );
+    }
+    
+    return filtered;
+  };
+
   const autoSelectModel = (query: string) => {
     const queryWords = query.split(' ').length;
     const queryLower = query.toLowerCase();
     
-    // Technical queries
-    if (queryLower.includes('code') || queryLower.includes('programming') || queryLower.includes('software')) {
-      return 'mixtral-8x7b-32768';
+    // Get available models for the selected provider
+    const availableModels = models[selectedProvider] || {};
+    const modelEntries = Object.entries(availableModels);
+    
+    if (modelEntries.length === 0) return '';
+    
+    // Technical queries - prefer models with larger context windows
+    if (queryLower.includes('code') || queryLower.includes('programming') || queryLower.includes('software') || queryLower.includes('api') || queryLower.includes('technical')) {
+      // Find model with largest context window for technical tasks
+      const technicalModels = modelEntries.filter(([key, model]) => 
+        model.context_window && model.context_window >= 8192
+      );
+      if (technicalModels.length > 0) {
+        return technicalModels.reduce((best, current) => 
+          (current[1].context_window || 0) > (best[1].context_window || 0) ? current : best
+        )[0];
+      }
+      return 'compound-beta';
     }
-    // Academic/research queries
-    else if (queryLower.includes('research') || queryLower.includes('analysis') || queryLower.includes('study')) {
-      return 'llama-3.2-90b-text-preview';
+    
+    // Academic/research queries - prefer high-quality models
+    else if (queryLower.includes('research') || queryLower.includes('analysis') || queryLower.includes('study') || queryLower.includes('academic') || queryLower.includes('thesis')) {
+      // Prefer models with "premium" quality tier or large context windows
+      const academicModels = modelEntries.filter(([key, model]) => 
+        model.quality_tier === 'premium' || (model.context_window && model.context_window >= 32768)
+      );
+      if (academicModels.length > 0) {
+        return academicModels[0][0];
+      }
+      return 'llama-3.3-70b-versatile';
     }
-    // Long complex queries
+    
+    // Long complex queries - need large context windows
     else if (queryWords > 30) {
-      return 'llama-3.1-70b-versatile';
+      const largeContextModels = modelEntries.filter(([key, model]) => 
+        model.context_window && model.context_window >= 32768
+      );
+      if (largeContextModels.length > 0) {
+        return largeContextModels[0][0];
+      }
+      return 'llama-3.3-70b-versatile';
     }
+    
     // Medium queries
     else if (queryWords > 10) {
-      return 'llama-3.1-70b-versatile';
+      const mediumModels = modelEntries.filter(([key, model]) => 
+        model.context_window && model.context_window >= 8192
+      );
+      if (mediumModels.length > 0) {
+        return mediumModels[0][0];
+      }
+      return 'llama-3.3-70b-versatile';
     }
-    // Quick queries
+    
+    // Quick queries - prefer fast models
     else {
+      const fastModels = modelEntries.filter(([key, model]) => 
+        key.includes('instant') || key.includes('3b') || key.includes('8b')
+      );
+      if (fastModels.length > 0) {
+        return fastModels[0][0];
+      }
       return 'llama-3.1-8b-instant';
     }
   };
@@ -106,21 +196,29 @@ const EnhancedModelSelector = ({
   const getModelIcon = (modelKey: string) => {
     if (modelKey.includes('70b') || modelKey.includes('90b')) return <Star className="w-4 h-4 text-yellow-400" />;
     if (modelKey.includes('mixtral')) return <Code className="w-4 h-4 text-purple-400" />;
-    if (modelKey.includes('instant')) return <Zap className="w-4 h-4 text-blue-400" />;
+    if (modelKey.includes('instant') || modelKey.includes('3b')) return <Zap className="w-4 h-4 text-blue-400" />;
     if (modelKey.includes('gemma')) return <Cpu className="w-4 h-4 text-green-400" />;
+    if (modelKey.includes('whisper')) return <BookOpen className="w-4 h-4 text-orange-400" />;
+    if (modelKey.includes('compound')) return <Brain className="w-4 h-4 text-indigo-400" />;
+    if (modelKey.includes('qwen')) return <Cpu className="w-4 h-4 text-teal-400" />;
+    if (modelKey.includes('llama')) return <Brain className="w-4 h-4 text-gray-400" />;
     return <Brain className="w-4 h-4 text-gray-400" />;
   };
 
-  const getQualityBadge = (modelName: string) => {
-    if (modelName.includes('⭐')) return 'premium';
-    if (modelName.includes('🚀') || modelName.includes('⚡') || modelName.includes('💻')) return 'standard';
-    return 'basic';
+  const getQualityBadge = (qualityTier: string | undefined) => {
+    switch (qualityTier) {
+      case 'premium': return 'Premium';
+      case 'standard': return 'Standard';
+      case 'basic': return 'Basic';
+      default: return 'Unknown';
+    }
   };
 
-  const getQualityColor = (quality: string) => {
+  const getQualityColor = (quality: string | undefined) => {
     switch (quality) {
       case 'premium': return 'border-yellow-500/50 bg-yellow-500/10 text-yellow-300';
       case 'standard': return 'border-blue-500/50 bg-blue-500/10 text-blue-300';
+      case 'basic': return 'border-gray-500/50 bg-gray-500/10 text-gray-300';
       default: return 'border-gray-500/50 bg-gray-500/10 text-gray-300';
     }
   };
@@ -152,6 +250,64 @@ const EnhancedModelSelector = ({
   };
 
   const apiKeyStatus = getApiKeyStatus();
+
+  // Model Capabilities Component
+  const ModelCapabilities = ({ model }: { model: Model }) => {
+    const getCapabilityLevel = (contextWindow: number | undefined) => {
+      if (!contextWindow) return 'Unknown';
+      if (contextWindow >= 131072) return 'Ultra';
+      if (contextWindow >= 32768) return 'High';
+      if (contextWindow >= 8192) return 'Medium';
+      return 'Basic';
+    };
+
+    const getCapabilityColor = (level: string) => {
+      switch (level) {
+        case 'Ultra': return 'text-purple-400';
+        case 'High': return 'text-yellow-400';
+        case 'Medium': return 'text-blue-400';
+        case 'Basic': return 'text-gray-400';
+        default: return 'text-gray-400';
+      }
+    };
+
+    return (
+      <div className="mt-3 p-3 bg-black/10 rounded-lg border border-white/10">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+          {model.context_window && (
+            <div>
+              <div className="text-gray-400 mb-1">Context Window</div>
+              <div className={`font-mono ${getCapabilityColor(getCapabilityLevel(model.context_window))}`}>
+                {model.context_window.toLocaleString()}
+              </div>
+            </div>
+          )}
+          {model.max_completion_tokens && (
+            <div>
+              <div className="text-gray-400 mb-1">Max Completion</div>
+              <div className="text-blue-300 font-mono">
+                {model.max_completion_tokens.toLocaleString()}
+              </div>
+            </div>
+          )}
+          {model.owned_by && (
+            <div>
+              <div className="text-gray-400 mb-1">Provider</div>
+              <div className="text-green-300">{model.owned_by}</div>
+            </div>
+          )}
+          {model.quality_tier && (
+            <div>
+              <div className="text-gray-400 mb-1">Quality</div>
+              <div className={`capitalize ${getQualityColor(model.quality_tier).split(' ')[2]}`}>
+                {model.quality_tier}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -187,6 +343,11 @@ const EnhancedModelSelector = ({
             <p className="text-green-200 text-sm">
               {models.groq?.[recommendedModel]?.name || recommendedModel} - Best fit for your query
             </p>
+            {models.groq?.[recommendedModel]?.context_window && (
+              <p className="text-green-200 text-xs mt-1">
+                Context window: {models.groq[recommendedModel].context_window?.toLocaleString()} tokens
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -229,13 +390,47 @@ const EnhancedModelSelector = ({
           <label className="block text-white text-sm font-medium mb-3">
             Model Selection
           </label>
+          
+          {/* Model Filters */}
+          <div className="mb-4 flex flex-wrap gap-4">
+            <div>
+              <label className="block text-gray-300 text-xs mb-1">Quality Tier</label>
+              <select
+                value={filterQuality}
+                onChange={(e) => setFilterQuality(e.target.value)}
+                className="px-3 py-1 bg-black/20 border border-white/30 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                disabled={isLoading}
+              >
+                <option value="all">All Tiers</option>
+                <option value="premium">Premium</option>
+                <option value="standard">Standard</option>
+                <option value="basic">Basic</option>
+              </select>
+            </div>
+            
+            <div>
+              <label className="block text-gray-300 text-xs mb-1">Context Window</label>
+              <select
+                value={filterContext}
+                onChange={(e) => setFilterContext(e.target.value)}
+                className="px-3 py-1 bg-black/20 border border-white/30 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                disabled={isLoading}
+              >
+                <option value="all">All Sizes</option>
+                <option value="ultra">Ultra (131K+)</option>
+                <option value="high">High (32K+)</option>
+                <option value="medium">Medium (8K+)</option>
+                <option value="basic">Basic (Any)</option>
+              </select>
+            </div>
+          </div>
+          
           <div className="space-y-3">
             {selectedProvider && models[selectedProvider] && 
-              Object.entries(models[selectedProvider]).map(([key, model]) => {
-                const quality = getQualityBadge(model.name);
+              getFilteredModels().map(([key, model]) => {
+                const quality = getQualityBadge(model.quality_tier);
                 const isSelected = selectedModel === key;
                 const isRecommended = key === recommendedModel;
-                
                 return (
                   <div
                     key={key}
@@ -258,15 +453,80 @@ const EnhancedModelSelector = ({
                               Recommended
                             </span>
                           )}
-                          <span className={`px-2 py-1 text-xs rounded-full border ${getQualityColor(quality)}`}>
+                          <span className={`px-2 py-1 text-xs rounded-full border ${getQualityColor(model.quality_tier)}`}>
                             {quality}
                           </span>
+                          {model.active !== undefined && (
+                            <span className={`px-2 py-1 text-xs rounded-full border ${
+                              model.active 
+                                ? 'border-green-500/50 bg-green-500/10 text-green-300' 
+                                : 'border-red-500/50 bg-red-500/10 text-red-300'
+                            }`}>
+                              {model.active ? 'Active' : 'Inactive'}
+                            </span>
+                          )}
                         </div>
                         <p className="text-gray-300 text-sm mb-2">{model.description}</p>
-                        {model.best_for && (
-                          <p className="text-gray-400 text-xs">
-                            <strong>Best for:</strong> {model.best_for}
-                          </p>
+                        {/* Show best_for as tags */}
+                        {model.best_for && model.best_for.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {model.best_for.map((tag, idx) => (
+                              <span key={idx} className="px-2 py-0.5 bg-blue-500/10 text-blue-300 rounded-full text-xs border border-blue-500/20">
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {/* Show estimated_time, cost, max_tokens, recommended_temperature, memory_usage */}
+                        <div className="flex flex-wrap gap-4 text-xs text-gray-400">
+                          {model.estimated_time && <span>⏱️ {model.estimated_time}</span>}
+                          {model.cost && <span>💲{model.cost}</span>}
+                          {model.max_tokens && <span>🔢 Max tokens: {model.max_tokens}</span>}
+                          {model.recommended_temperature !== undefined && <span>🌡️ Temp: {model.recommended_temperature}</span>}
+                          {model.memory_usage && <span>💾 {model.memory_usage}</span>}
+                          {model.context_window && <span>📄 Context: {model.context_window.toLocaleString()}</span>}
+                          {model.max_completion_tokens && <span>✍️ Completion: {model.max_completion_tokens.toLocaleString()}</span>}
+                          {model.owned_by && <span>🏢 {model.owned_by}</span>}
+                          {model.created && (
+                            <span>📅 {new Date(model.created * 1000).toLocaleDateString()}</span>
+                          )}
+                        </div>
+                        
+                        {/* Model Capabilities */}
+                        {(model.context_window || model.max_completion_tokens || model.owned_by) && (
+                          <ModelCapabilities model={model} />
+                        )}
+                        
+                        {/* Model Performance Metrics */}
+                        {(model.estimated_time || model.quality_tier || model.context_window) && (
+                          <div className="mt-3 p-3 bg-black/10 rounded-lg border border-white/10">
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                              {model.estimated_time && (
+                                <div>
+                                  <div className="text-gray-400 mb-1">Speed</div>
+                                  <div className="text-yellow-300 font-medium">{model.estimated_time}</div>
+                                </div>
+                              )}
+                              {model.quality_tier && (
+                                <div>
+                                  <div className="text-gray-400 mb-1">Quality</div>
+                                  <div className={`capitalize font-medium ${getQualityColor(model.quality_tier).split(' ')[2]}`}>
+                                    {model.quality_tier}
+                                  </div>
+                                </div>
+                              )}
+                              {model.context_window && (
+                                <div>
+                                  <div className="text-gray-400 mb-1">Capacity</div>
+                                  <div className="text-blue-300 font-medium">
+                                    {model.context_window >= 131072 ? 'Ultra' :
+                                     model.context_window >= 32768 ? 'High' :
+                                     model.context_window >= 8192 ? 'Medium' : 'Basic'}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         )}
                       </div>
                       <div className="ml-4">
@@ -283,6 +543,23 @@ const EnhancedModelSelector = ({
                 );
               })
             }
+            
+            {/* No models found message */}
+            {selectedProvider && models[selectedProvider] && getFilteredModels().length === 0 && (
+              <div className="p-6 text-center bg-black/20 rounded-xl border border-white/20">
+                <div className="text-gray-400 mb-2">🔍</div>
+                <p className="text-gray-300 mb-2">No models found matching your filters</p>
+                <button
+                  onClick={() => {
+                    setFilterQuality('all');
+                    setFilterContext('all');
+                  }}
+                  className="text-blue-400 hover:text-blue-300 text-sm"
+                >
+                  Clear filters
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -300,7 +577,8 @@ const EnhancedModelSelector = ({
               <div className="text-gray-300">
                 • Best quality<br/>
                 • Complex analysis<br/>
-                • Detailed reports
+                • Detailed reports<br/>
+                • Large context windows
               </div>
             </div>
             <div className="text-center">
@@ -308,7 +586,8 @@ const EnhancedModelSelector = ({
               <div className="text-gray-300">
                 • Good balance<br/>
                 • Fast processing<br/>
-                • General research
+                • General research<br/>
+                • Medium context windows
               </div>
             </div>
             <div className="text-center">
@@ -316,7 +595,31 @@ const EnhancedModelSelector = ({
               <div className="text-gray-300">
                 • Ultra fast<br/>
                 • Simple queries<br/>
-                • Quick testing
+                • Quick testing<br/>
+                • Smaller context windows
+              </div>
+            </div>
+          </div>
+          
+          {/* Context Window Comparison */}
+          <div className="mt-4 p-3 bg-black/10 rounded-lg">
+            <h4 className="text-white text-sm font-medium mb-2">Context Window Comparison</h4>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-xs">
+              <div className="text-center">
+                <div className="text-purple-400 font-medium">Ultra (131K+)</div>
+                <div className="text-gray-400">Long documents, complex analysis</div>
+              </div>
+              <div className="text-center">
+                <div className="text-yellow-400 font-medium">High (32K+)</div>
+                <div className="text-gray-400">Detailed research, multiple sources</div>
+              </div>
+              <div className="text-center">
+                <div className="text-blue-400 font-medium">Medium (8K+)</div>
+                <div className="text-gray-400">Standard reports, summaries</div>
+              </div>
+              <div className="text-center">
+                <div className="text-gray-400 font-medium">Basic (Any)</div>
+                <div className="text-gray-400">Quick facts, simple queries</div>
               </div>
             </div>
           </div>
@@ -344,6 +647,110 @@ const EnhancedModelSelector = ({
           )}
         </div>
       )}
+
+      {/* Model Usage Statistics */}
+      {selectedProvider && models[selectedProvider] && (
+        <div className="bg-black/20 rounded-xl p-4 border border-white/20">
+          <h3 className="text-white font-medium mb-3 flex items-center">
+            <BarChart3 className="w-4 h-4 mr-2" />
+            Model Statistics
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-400 mb-1">
+                {Object.keys(models[selectedProvider]).length}
+              </div>
+              <div className="text-gray-300 text-xs">Total Models</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-yellow-400 mb-1">
+                {Object.values(models[selectedProvider]).filter(m => m.quality_tier === 'premium').length}
+              </div>
+              <div className="text-gray-300 text-xs">Premium Models</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-green-400 mb-1">
+                {Object.values(models[selectedProvider]).filter(m => m.active !== false).length}
+              </div>
+              <div className="text-gray-300 text-xs">Active Models</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-purple-400 mb-1">
+                {Math.max(...Object.values(models[selectedProvider]).map(m => m.context_window || 0).filter(w => w > 0))}
+              </div>
+              <div className="text-gray-300 text-xs">Max Context</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Search Engine Selection Component
+const SearchEngineSelector = ({ 
+  selectedSearchEngine, 
+  setSelectedSearchEngine, 
+  isLoading 
+}: {
+  selectedSearchEngine: string;
+  setSelectedSearchEngine: (engine: string) => void;
+  isLoading: boolean;
+}) => {
+  return (
+    <div className="space-y-3">
+      <label className="block text-white text-sm font-medium mb-3">
+        Search Engine
+      </label>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div 
+          className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+            selectedSearchEngine === 'free_web'
+              ? 'border-blue-500 bg-blue-500/10'
+              : 'border-white/20 bg-black/10 hover:border-white/40'
+          }`}
+          onClick={() => !isLoading && setSelectedSearchEngine('free_web')}
+        >
+          <div className="flex items-center space-x-3">
+            <div className="bg-yellow-500/10 p-2 rounded-lg">
+              <SearchIcon className="w-5 h-5 text-yellow-400" />
+            </div>
+            <div>
+              <h3 className="text-white font-medium">FusionSearch</h3>
+              <p className="text-gray-300 text-sm">Combines Google & Bing for broad, reliable results</p>
+            </div>
+          </div>
+        </div>
+
+        <div 
+          className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+            selectedSearchEngine === 'serpapi'
+              ? 'border-blue-500 bg-blue-500/10'
+              : 'border-white/20 bg-black/10 hover:border-white/40'
+          }`}
+          onClick={() => !isLoading && setSelectedSearchEngine('serpapi')}
+        >
+          <div className="flex items-center space-x-3">
+            <div className="bg-green-500/10 p-2 rounded-lg">
+              <SearchIcon className="w-5 h-5 text-green-400" />
+            </div>
+            <div>
+              <h3 className="text-white font-medium">SerpAPI</h3>
+              <p className="text-gray-300 text-sm">Enhanced commercial results</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      {selectedSearchEngine === 'serpapi' && (
+        <div className="flex items-center p-3 bg-yellow-500/10 rounded-xl border border-yellow-500/30">
+          <AlertCircle className="w-4 h-4 text-yellow-400 mr-2" />
+          <span className="text-yellow-300 text-sm">
+            Requires SERPAPI_API_KEY in backend
+          </span>
+        </div>
+      )}
     </div>
   );
 };
@@ -354,7 +761,9 @@ const App: React.FC = () => {
   const [models, setModels] = useState<Models>({});
   const [selectedProvider, setSelectedProvider] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
+  const [selectedSearchEngine, setSelectedSearchEngine] = useState('free_web');
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [progress, setProgress] = useState(0);
   const [currentStage, setCurrentStage] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -401,6 +810,9 @@ const App: React.FC = () => {
 
   const loadModels = async () => {
     try {
+      setIsLoadingModels(true);
+      setError(null);
+      
       const response = await fetch(`${API_BASE}/api/models`);
       const data = await response.json();
       
@@ -418,10 +830,14 @@ const App: React.FC = () => {
             setSelectedModel(modelKeys[0]);
           }
         }
+      } else {
+        setError('Failed to load models from server');
       }
     } catch (err) {
       setError('Failed to load models. Make sure the backend is running.');
       console.error('Error loading models:', err);
+    } finally {
+      setIsLoadingModels(false);
     }
   };
 
@@ -443,6 +859,7 @@ const App: React.FC = () => {
         query: query.trim(),
         provider: selectedProvider,
         model_key: selectedModel,
+        search_engine: selectedSearchEngine,
         max_tokens: maxTokens,
         temperature: temperature
       };
@@ -593,7 +1010,7 @@ const App: React.FC = () => {
                 Research Question
               </label>
               <div className="relative">
-                <Search className="absolute left-4 top-4 w-5 h-5 text-gray-400" />
+                <SearchIcon className="absolute left-4 top-4 w-5 h-5 text-gray-400" />
                 <textarea
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
@@ -605,14 +1022,63 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            {/* Query Analysis */}
+            {query && (
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
+                <h3 className="text-blue-300 font-medium mb-2 flex items-center">
+                  <Search className="w-4 h-4 mr-2" />
+                  Query Analysis
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                  <div>
+                    <span className="text-gray-400">Query Type: </span>
+                    <span className="text-blue-300">
+                      {query.toLowerCase().includes('code') || query.toLowerCase().includes('programming') ? 'Technical' :
+                       query.toLowerCase().includes('research') || query.toLowerCase().includes('analysis') ? 'Academic' :
+                       query.split(' ').length > 30 ? 'Complex' :
+                       query.split(' ').length > 10 ? 'Detailed' : 'Simple'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">Word Count: </span>
+                    <span className="text-blue-300">{query.split(' ').length}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">Recommended Context: </span>
+                    <span className="text-blue-300">
+                      {query.split(' ').length > 30 ? 'Large (32K+)' :
+                       query.split(' ').length > 10 ? 'Medium (8K+)' : 'Small (Any)'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Model Selection */}
-            <EnhancedModelSelector
-              models={models}
-              selectedProvider={selectedProvider}
-              selectedModel={selectedModel}
-              setSelectedProvider={setSelectedProvider}
-              setSelectedModel={setSelectedModel}
-              query={query}
+            {isLoadingModels ? (
+              <div className="flex items-center justify-center p-8 bg-black/20 rounded-xl border border-white/20">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-400 mr-3" />
+                <div>
+                  <p className="text-white font-medium">Loading Models</p>
+                  <p className="text-gray-400 text-sm">Fetching available AI models from providers...</p>
+                </div>
+              </div>
+            ) : (
+              <EnhancedModelSelector
+                models={models}
+                selectedProvider={selectedProvider}
+                selectedModel={selectedModel}
+                setSelectedProvider={setSelectedProvider}
+                setSelectedModel={setSelectedModel}
+                query={query}
+                isLoading={isLoading}
+              />
+            )}
+
+            {/* Search Engine Selection */}
+            <SearchEngineSelector
+              selectedSearchEngine={selectedSearchEngine}
+              setSelectedSearchEngine={setSelectedSearchEngine}
               isLoading={isLoading}
             />
 
