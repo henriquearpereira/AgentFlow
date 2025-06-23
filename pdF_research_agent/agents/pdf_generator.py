@@ -10,10 +10,16 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, 
-    HRFlowable, PageBreak, KeepTogether
+    HRFlowable, PageBreak, KeepTogether, Image
 )
+from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+
+# Add matplotlib for charting
+import matplotlib.pyplot as plt
+import tempfile
+import os
 
 
 class PDFGenerator:
@@ -373,6 +379,16 @@ class PDFGenerator:
         try:
             # Create directory if needed
             Path(filename).parent.mkdir(parents=True, exist_ok=True)
+            temp_images = []  # Track temp images for cleanup
+            
+            # Branding config
+            logo_path = None
+            org_name = None
+            primary_color = None
+            if self.config:
+                logo_path = self.config.get('logo_path')
+                org_name = self.config.get('org_name')
+                primary_color = self.config.get('primary_color')
             
             doc = SimpleDocTemplate(
                 filename, 
@@ -384,8 +400,25 @@ class PDFGenerator:
             )
             story = []
             
-            # Enhanced title section with quality badge
+            # Table of Contents setup
+            toc = TableOfContents()
+            toc.levelStyles = [
+                ParagraphStyle(fontSize=14, name='TOCHeading1', leftIndent=20, firstLineIndent=-20, spaceBefore=10, spaceAfter=8, leading=18),
+                ParagraphStyle(fontSize=12, name='TOCHeading2', leftIndent=40, firstLineIndent=-20, spaceBefore=7, spaceAfter=6, leading=16),
+            ]
+            story.append(Paragraph("Table of Contents", self.styles['TitleCustom']))
+            story.append(Spacer(1, 12))
+            story.append(toc)
+            story.append(PageBreak())
+            
+            # Enhanced title section with branding
+            if logo_path and Path(logo_path).exists():
+                story.append(Image(logo_path, width=2*inch, height=2*inch))
+                story.append(Spacer(1, 10))
             story.append(Paragraph("AI Research Report", self.styles['TitleCustom']))
+            if org_name:
+                story.append(Paragraph(f"<b>{org_name}</b>", self.styles['MetadataText']))
+                story.append(Spacer(1, 8))
             
             # Add quality badge
             quality_style = 'QualityGood' if quality_assessment['score'] >= 60 else 'QualityPoor'
@@ -432,7 +465,8 @@ class PDFGenerator:
             
             # Filter and process content
             filtered_content = self._filter_low_quality_content(content)
-            self._process_content(filtered_content, story)
+            section_bookmarks = []
+            self._process_content_with_toc(filtered_content, story, toc, temp_images, section_bookmarks)
             
             # Add quality issues section if any
             if quality_assessment['issues']:
@@ -463,7 +497,13 @@ class PDFGenerator:
                 self.styles['FooterText']
             ))
             
-            doc.build(story)
+            doc.build(story, onFirstPage=lambda c, d: self._add_toc_bookmarks(c, d, section_bookmarks, first_page=True), onLaterPages=lambda c, d: self._add_toc_bookmarks(c, d, section_bookmarks, first_page=False))
+            # Clean up temp images
+            for img_path in temp_images:
+                try:
+                    os.remove(img_path)
+                except Exception:
+                    pass
             print(f"✅ Enhanced PDF created successfully: {filename}")
             return True
             
@@ -471,47 +511,64 @@ class PDFGenerator:
             print(f"⚠️ PDF creation failed: {e}")
             return False
     
-    def _process_content(self, content: str, story: list):
-        """Process markdown content with enhanced formatting and placeholder detection"""
+    def _process_content_with_toc(self, content: str, story: list, toc, temp_images=None, section_bookmarks=None):
+        """Process markdown content, add section numbering, collect TOC entries, and record bookmarks for clickable TOC."""
+        if temp_images is None:
+            temp_images = []
+        if section_bookmarks is None:
+            section_bookmarks = []
         sections = re.split(r'\n(?=##)', content)
-        
+        section_num = 0
+        subsection_num = 0
         for i, section in enumerate(sections):
             if not section.strip():
                 continue
-            
             lines = section.split('\n')
             section_title = lines[0].strip()
             section_content = '\n'.join(lines[1:]).strip()
-            
             if section_title:
                 cleaned_title = self._clean_title(section_title)
-                
+                # Normalize header: remove stray '#' and extra whitespace
+                cleaned_title = re.sub(r'^#+\s*', '', cleaned_title).strip()
                 if not cleaned_title:
                     continue
-                
-                hashtag_count = len(re.match(r'^#+', section_title.strip()).group()) if re.match(r'^#+', section_title.strip()) else 2
-                
+                hashtag_match = re.match(r'^(#+)', section_title.strip())
+                hashtag_count = len(hashtag_match.group()) if hashtag_match else 2
                 if hashtag_count <= 2:
+                    section_num += 1
+                    subsection_num = 0
+                    numbered_title = f"{section_num}. {cleaned_title}"
                     title_style = self.styles['SectionHeader']
+                    toc.addEntry(0, numbered_title, len(story))
+                    bookmark_name = f"section_{section_num}"
+                    section_bookmarks.append((len(story), bookmark_name, numbered_title, 0))
                 else:
+                    subsection_num += 1
+                    numbered_title = f"{section_num}.{subsection_num} {cleaned_title}"
                     title_style = self.styles['SubsectionHeader']
-                
+                    toc.addEntry(1, numbered_title, len(story))
+                    bookmark_name = f"section_{section_num}_{subsection_num}"
+                    section_bookmarks.append((len(story), bookmark_name, numbered_title, 1))
                 if hashtag_count <= 2 and self._should_page_break(cleaned_title):
                     story.append(PageBreak())
                     story.append(Spacer(1, 12))
-                
-                story.append(Paragraph(cleaned_title, title_style))
-                
-                # Check for salary data tables
+                # Add anchor for bookmark
+                story.append(Paragraph(f'<a name="{bookmark_name}"/>{numbered_title}', title_style))
+                # Check for salary data tables and chart
                 if self._contains_salary_data(section_content):
-                    salary_table = self._extract_salary_table(section_content)
+                    salary_table, salary_values = self._extract_salary_table(section_content, return_values=True)
                     if salary_table:
                         story.append(Spacer(1, 10))
                         story.append(salary_table)
-                        story.append(Spacer(1, 15))
-                
+                        story.append(Spacer(1, 10))
+                        # Generate and insert chart if values present
+                        if salary_values:
+                            chart_path = self._generate_salary_chart(salary_values)
+                            if chart_path:
+                                temp_images.append(chart_path)
+                                story.append(Image(chart_path, width=4*inch, height=2.5*inch))
+                                story.append(Spacer(1, 15))
                 self._process_section_content(section_content, story)
-                
                 if i < len(sections) - 2:
                     story.append(Spacer(1, 25))
     
@@ -591,25 +648,34 @@ class PDFGenerator:
         salary_keywords = ['salary', 'compensation', '€', '$', 'wage', 'income', 'pay']
         return any(keyword.lower() in content.lower() for keyword in salary_keywords)
     
-    def _extract_salary_table(self, content: str) -> Table:
-        """Extract and format salary data into a professional table"""
+    def _extract_salary_table(self, content: str, return_values=False):
+        """Extract and format salary data into a professional table. Optionally return values for charting."""
         salary_data = []
-        
+        values = {}
         range_match = re.search(r'€([\d,]+)\s*-\s*€([\d,]+)', content)
         if range_match:
             salary_data.append(['Salary Range', f"€{range_match.group(1)} - €{range_match.group(2)}"])
-        
+            try:
+                values['Range Low'] = int(range_match.group(1).replace(',', ''))
+                values['Range High'] = int(range_match.group(2).replace(',', ''))
+            except Exception:
+                pass
         median_match = re.search(r'[Mm]edian[:\s]*€([\d,]+)', content)
         if median_match:
             salary_data.append(['Median Compensation', f"€{median_match.group(1)}"])
-        
+            try:
+                values['Median'] = int(median_match.group(1).replace(',', ''))
+            except Exception:
+                pass
         avg_match = re.search(r'[Aa]verage[:\s]*€([\d,]+)', content)
         if avg_match:
             salary_data.append(['Average Compensation', f"€{avg_match.group(1)}"])
-        
+            try:
+                values['Average'] = int(avg_match.group(1).replace(',', ''))
+            except Exception:
+                pass
         if salary_data:
             table_data = [['Metric', 'Value']] + salary_data
-            
             table = Table(table_data, colWidths=[2.5*inch, 2.5*inch])
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#34495E")),
@@ -626,10 +692,46 @@ class PDFGenerator:
                 ('TOPPADDING', (0, 0), (-1, -1), 8),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
             ]))
-            
+            if return_values:
+                return table, values
             return table
-        
+        if return_values:
+            return None, None
         return None
+
+    def _generate_salary_chart(self, values: dict) -> str:
+        """Generate a bar chart for salary data and return the image path."""
+        if not values:
+            return None
+        labels = []
+        data = []
+        if 'Range Low' in values and 'Range High' in values:
+            labels.extend(['Range Low', 'Range High'])
+            data.extend([values['Range Low'], values['Range High']])
+        if 'Median' in values:
+            labels.append('Median')
+            data.append(values['Median'])
+        if 'Average' in values:
+            labels.append('Average')
+            data.append(values['Average'])
+        if not labels or not data:
+            return None
+        fig, ax = plt.subplots(figsize=(4, 2.5))
+        bars = ax.bar(labels, data, color=['#2980B9', '#27AE60', '#E67E22', '#8E44AD'][:len(labels)])
+        ax.set_ylabel('€')
+        ax.set_title('Salary/Compensation Overview')
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(f'€{height:,}',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3),  # 3 points vertical offset
+                        textcoords="offset points",
+                        ha='center', va='bottom', fontsize=9)
+        plt.tight_layout()
+        tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+        plt.savefig(tmpfile.name, format='png')
+        plt.close(fig)
+        return tmpfile.name
     
     def _is_key_insight(self, text: str) -> bool:
         """Determine if text contains key insights that should be highlighted"""
@@ -638,6 +740,17 @@ class PDFGenerator:
             'trend', 'outlook', 'forecast', 'projected', 'expected'
         ]
         return any(indicator.lower() in text.lower() for indicator in key_indicators)
+    
+    def _add_toc_bookmarks(self, canvas, doc, section_bookmarks, first_page=False):
+        """Add bookmarks and outline entries for clickable TOC. Only add on first page to avoid duplication."""
+        if not first_page:
+            return
+        for idx, bookmark_name, title, level in section_bookmarks:
+            try:
+                canvas.bookmarkPage(bookmark_name)
+                canvas.addOutlineEntry(title, bookmark_name, level=level, closed=False)
+            except Exception:
+                pass
     
     def create_text_report(self, content: str, filename: str) -> bool:
         """Create plain text report as fallback with quality assessment"""
