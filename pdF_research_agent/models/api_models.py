@@ -5,6 +5,7 @@ import requests
 import time
 import json
 from typing import Optional, Dict, Any
+import threading
 
 try:
     from huggingface_hub import InferenceClient
@@ -12,6 +13,31 @@ try:
 except ImportError:
     HF_AVAILABLE = False
     print("⚠️ huggingface_hub not installed. Run: pip install huggingface_hub")
+
+# Global rate limiter for Together API
+class TogetherRateLimiter:
+    def __init__(self, max_calls=6, period=60):
+        self.max_calls = max_calls
+        self.period = period
+        self.lock = threading.Lock()
+        self.calls = []  # list of timestamps
+
+    def wait(self):
+        with self.lock:
+            now = time.time()
+            # Remove calls older than period
+            self.calls = [t for t in self.calls if now - t < self.period]
+            if len(self.calls) >= self.max_calls:
+                sleep_time = self.period - (now - self.calls[0])
+                if sleep_time > 0:
+                    print(f"⏳ Together API rate limit hit. Waiting {sleep_time:.1f}s...")
+                    time.sleep(sleep_time)
+                # After sleep, clean up again
+                now = time.time()
+                self.calls = [t for t in self.calls if now - t < self.period]
+            self.calls.append(time.time())
+
+together_rate_limiter = TogetherRateLimiter()
 
 class APIModelHandler:
     def __init__(self, provider: str, model_name: str, api_key: str, max_tokens: int = 2000, temperature: float = 0.3, verbose: bool = False):
@@ -157,6 +183,10 @@ class APIModelHandler:
     def _generate_openai_compatible(self, prompt: str, max_tokens: int, temperature: float, **kwargs) -> str:
         """Generate using OpenAI-compatible APIs (Groq, Together, OpenRouter)"""
         url = f"{self.base_url}/chat/completions"
+        
+        # Rate limit Together API calls
+        if self.provider == "together":
+            together_rate_limiter.wait()
         
         # Use custom system prompt if provided, otherwise use enhanced default
         if self.system_prompt:
