@@ -123,38 +123,60 @@ MODEL_CONFIGS = {
     },
     
     "together": {
-        "llama-3.1-8b": {
-            "name": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-            "description": "Llama 3.1 8B Turbo",
-            "estimated_time": "5-10s",
-            "cost": "Free: $25 credits monthly",
-            "quality": "Excellent"
+        "meta-llama/Llama-3.2-3B-Instruct-Turbo": {
+            "name": "meta-llama/Llama-3.2-3B-Instruct-Turbo",
+            "description": "Meta Llama 3.2 3B Instruct Turbo - Cost-effective, good for basic task coordination and planning.",
+            "estimated_time": "Fast",
+            "cost": "$0.06 per 1M tokens (~33.3M tokens for $2)",
+            "quality": "Standard",
+            "max_tokens": 8192,
+            "recommended_temperature": 0.2,
+            "best_for": ["Basic Coordination", "Planning", "High Volume"],
+            "quality_tier": "basic",
+            "memory_usage": "Cloud",
+            "id": "meta-llama/Llama-3.2-3B-Instruct-Turbo",
+            "owned_by": "Meta",
+            "active": True,
+            "context_window": 8192,
+            "max_completion_tokens": 8192
         },
-        "qwen-2.5-7b": {
-            "name": "Qwen/Qwen2.5-7B-Instruct-Turbo", 
-            "description": "Qwen 2.5 7B (Fast, multilingual)",
-            "estimated_time": "4-8s",
-            "cost": "Free: $25 credits monthly",
-            "quality": "Very Good"
+        "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free": {
+            "name": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
+            "description": "DeepSeek R1 Distill Llama 70B (Free) - Specialized reasoning, excellent for complex planning. Free tier.",
+            "estimated_time": "Medium",
+            "cost": "Free",
+            "quality": "Premium",
+            "max_tokens": 8192,
+            "recommended_temperature": 0.3,
+            "best_for": ["Complex Planning", "Specialized Reasoning"],
+            "quality_tier": "premium",
+            "memory_usage": "Cloud",
+            "id": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free",
+            "owned_by": "DeepSeek",
+            "active": True,
+            "context_window": 8192,
+            "max_completion_tokens": 8192
+        },
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free": {
+            "name": "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
+            "description": "Meta Llama 3.3 70B Instruct Turbo (Free) - High quality, free tier, great for advanced research.",
+            "estimated_time": "Medium",
+            "cost": "Free",
+            "quality": "Premium",
+            "max_tokens": 8192,
+            "recommended_temperature": 0.2,
+            "best_for": ["Advanced Research", "Complex Analysis"],
+            "quality_tier": "premium",
+            "memory_usage": "Cloud",
+            "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
+            "owned_by": "Meta",
+            "active": True,
+            "context_window": 8192,
+            "max_completion_tokens": 8192
         }
     },
     
-    "huggingface": {
-        "zephyr-7b": {
-            "name": "HuggingFaceH4/zephyr-7b-beta",
-            "description": "Zephyr 7B (HF Inference API)",
-            "estimated_time": "10-20s",
-            "cost": "Free tier: Rate limited",
-            "quality": "Excellent"
-        },
-        "mistral-7b": {
-            "name": "mistralai/Mistral-7B-Instruct-v0.1", 
-            "description": "Mistral 7B (HF Inference API)",
-            "estimated_time": "8-15s",
-            "cost": "Free tier: Rate limited", 
-            "quality": "Very Good"
-        }
-    },
+    "huggingface": {},
     
     "openrouter": {
         "llama-3.1-8b": {

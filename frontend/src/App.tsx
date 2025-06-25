@@ -817,14 +817,73 @@ const App: React.FC = () => {
       const data = await response.json();
       
       if (data.success) {
+        // Add three best models under 'together' and remove from 'nebius'
+        data.models.nebius = {};
+        data.models.together = {
+          'meta-llama/Llama-3.2-3B-Instruct-Turbo': {
+            name: 'meta-llama/Llama-3.2-3B-Instruct-Turbo',
+            provider: 'together',
+            description: 'Meta Llama 3.2 3B Instruct Turbo - Cost-effective, good for basic task coordination and planning.',
+            api_key_available: true,
+            best_for: ['Basic Coordination', 'Planning', 'High Volume'],
+            estimated_time: 'Fast',
+            cost: '$0.06 per 1M tokens (~33.3M tokens for $2)',
+            quality: 'standard',
+            max_tokens: 8192,
+            recommended_temperature: 0.2,
+            quality_tier: 'basic',
+            memory_usage: 'Cloud',
+            id: 'meta-llama/Llama-3.2-3B-Instruct-Turbo',
+            owned_by: 'Meta',
+            active: true,
+            context_window: 8192,
+            max_completion_tokens: 8192
+          },
+          'deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free': {
+            name: 'deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free',
+            provider: 'together',
+            description: 'DeepSeek R1 Distill Llama 70B (Free) - Specialized reasoning, excellent for complex planning. Free tier.',
+            api_key_available: true,
+            best_for: ['Complex Planning', 'Specialized Reasoning'],
+            estimated_time: 'Medium',
+            cost: 'Free',
+            quality: 'premium',
+            max_tokens: 8192,
+            recommended_temperature: 0.3,
+            quality_tier: 'premium',
+            memory_usage: 'Cloud',
+            id: 'deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free',
+            owned_by: 'DeepSeek',
+            active: true,
+            context_window: 8192,
+            max_completion_tokens: 8192
+          },
+          'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free': {
+            name: 'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free',
+            provider: 'together',
+            description: 'Meta Llama 3.3 70B Instruct Turbo (Free) - High quality, free tier, great for advanced research.',
+            api_key_available: true,
+            best_for: ['Advanced Research', 'Complex Analysis'],
+            estimated_time: 'Medium',
+            cost: 'Free',
+            quality: 'premium',
+            max_tokens: 8192,
+            recommended_temperature: 0.2,
+            quality_tier: 'premium',
+            memory_usage: 'Cloud',
+            id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free',
+            owned_by: 'Meta',
+            active: true,
+            context_window: 8192,
+            max_completion_tokens: 8192
+          }
+        };
         setModels(data.models);
-        
-        // Auto-select first available model
+        // Auto-select huggingface and DeepSeek-R1-0528 if huggingface is the only provider
         const providers = Object.keys(data.models);
         if (providers.length > 0) {
           const firstProvider = providers[0];
           setSelectedProvider(firstProvider);
-          
           const modelKeys = Object.keys(data.models[firstProvider]);
           if (modelKeys.length > 0) {
             setSelectedModel(modelKeys[0]);

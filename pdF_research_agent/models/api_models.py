@@ -6,6 +6,13 @@ import time
 import json
 from typing import Optional, Dict, Any
 
+try:
+    from huggingface_hub import InferenceClient
+    HF_AVAILABLE = True
+except ImportError:
+    HF_AVAILABLE = False
+    print("⚠️ huggingface_hub not installed. Run: pip install huggingface_hub")
+
 class APIModelHandler:
     def __init__(self, provider: str, model_name: str, api_key: str, max_tokens: int = 2000, temperature: float = 0.3, verbose: bool = False):
         self.provider = provider
@@ -31,6 +38,8 @@ class APIModelHandler:
                 self.setup_together()
             elif self.provider == "huggingface":
                 self.setup_huggingface()
+            elif self.provider == "nebius":
+                self.setup_nebius()
             elif self.provider == "openrouter":
                 self.setup_openrouter()
             elif self.provider == "cohere":
@@ -97,6 +106,16 @@ class APIModelHandler:
             "Content-Type": "application/json"
         }
     
+    def setup_nebius(self):
+        """Setup Nebius client using Hugging Face SDK"""
+        if not HF_AVAILABLE:
+            raise ValueError("huggingface_hub package required for Nebius. Install with: pip install huggingface_hub")
+        if not self.api_key:
+            raise ValueError("HUGGINGFACE_API_KEY is required for Nebius provider")
+        self.client = InferenceClient(provider="nebius", api_key=self.api_key)
+        if self.verbose:
+            print(f"✅ Nebius client setup complete")
+    
     def set_parameters(self, temperature: float = None, max_tokens: int = None, system_prompt: str = None):
         """Set model parameters dynamically"""
         if temperature is not None:
@@ -121,6 +140,8 @@ class APIModelHandler:
                 return self._generate_openai_compatible(prompt, max_tokens, temperature, **kwargs)
             elif self.provider == "huggingface":
                 return self._generate_huggingface(prompt, max_tokens, temperature, **kwargs)
+            elif self.provider == "nebius":
+                return self._generate_nebius(prompt, max_tokens, temperature, **kwargs)
             elif self.provider == "cohere":
                 return self._generate_cohere(prompt, max_tokens, temperature, **kwargs)
             else:
@@ -265,6 +286,29 @@ Your responses should showcase intelligence, creativity, and practical value."""
                 
         except Exception as e:
             raise Exception(f"Cohere API error: {e}")
+    
+    def _generate_nebius(self, prompt: str, max_tokens: int, temperature: float, **kwargs) -> str:
+        """Generate using Nebius provider through Hugging Face"""
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            if self.system_prompt:
+                messages.insert(0, {"role": "system", "content": self.system_prompt})
+            if self.verbose:
+                print(f"🌐 Making request to Nebius via HuggingFace")
+                print(f"📦 Model: {self.model_name}")
+            completion = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                **kwargs
+            )
+            if self.verbose:
+                print(f"📡 Response received successfully")
+            return completion.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"❌ Nebius API error: {e}")
+            raise
     
     def _fallback_response(self, prompt: str, error_msg: str) -> str:
         """Generate a fallback response when API fails"""
