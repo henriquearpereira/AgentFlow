@@ -45,7 +45,7 @@ class PDFGenerator:
             'detailed analysis', 'technical specifications', 'future outlook'
         }
         
-        # Quality detection patterns
+        # Quality detection patterns - improved for historical content
         self.low_quality_patterns = [
             r'\b(detailed analysis|comprehensive examination).*?\b(reveals|uncovers|shows)\b.*?\b(important considerations|key insights|significant factors)\b',
             r'\b(market dynamics|industry trends|current patterns).*?\b(show|demonstrate|indicate)\b.*?\b(evolving trends|changing patterns|developing characteristics)\b',
@@ -212,24 +212,34 @@ class PDFGenerator:
             issues.append(f"High placeholder content ({placeholder_count} instances)")
             score -= placeholder_count * 5
         
-        # Check for actual data presence
-        has_numbers = bool(re.search(r'\d+[.,]\d+|\$\d+|€\d+|%|\d+\s*(people|users|companies)', content))
+        # Check for actual data presence - improved for historical content
+        has_numbers = bool(re.search(r'\d+[.,]\d+|\$\d+|€\d+|%|\d+\s*(people|users|companies|CE|BCE|AD|years|century)', content))
         has_urls = bool(re.search(r'https?://', content))
         has_specific_names = bool(re.search(r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b', content))
+        has_dates = bool(re.search(r'\b\d{3,4}\s*(CE|BCE|AD|BC)\b|\b\d{1,2}\w{2}\s+century\b', content, re.IGNORECASE))
+        has_historical_terms = bool(re.search(r'\b(battle|treaty|kingdom|empire|dynasty|conquest|reconquest|monarchy|republic)\b', content, re.IGNORECASE))
         
-        if not has_numbers:
-            issues.append("No specific numerical data found")
-            score -= 20
+        # For historical content, dates and historical terms are more important than URLs
+        if not has_dates and not has_historical_terms:
+            issues.append("No specific historical dates or terms found")
+            score -= 15
+        
+        if not has_numbers and not has_dates:
+            issues.append("No specific numerical data or dates found")
+            score -= 10
         
         if not has_urls:
             issues.append("No source URLs provided")
-            score -= 15
+            score -= 10  # Reduced penalty for historical content
         
         # Content length assessment
         word_count = len(content.split())
         if word_count < 200:
             issues.append(f"Content too brief ({word_count} words)")
             score -= 25
+        elif word_count < 500:
+            issues.append(f"Content could be more detailed ({word_count} words)")
+            score -= 10
         
         # Repetitive content check
         sentences = content.split('.')
@@ -237,6 +247,12 @@ class PDFGenerator:
         if len(sentences) > 10 and len(unique_sentences) / len(sentences) < 0.7:
             issues.append("High content repetition detected")
             score -= 20
+        
+        # Check for section structure
+        has_sections = bool(re.search(r'^#{1,3}\s+', content, re.MULTILINE))
+        if not has_sections:
+            issues.append("No clear section structure found")
+            score -= 10
         
         score = max(0, min(100, score))
         
@@ -246,8 +262,9 @@ class PDFGenerator:
             'score': score,
             'level': quality_level,
             'issues': issues,
-            'has_data': has_numbers,
+            'has_data': has_numbers or has_dates,
             'has_sources': has_urls,
+            'has_historical_content': has_dates or has_historical_terms,
             'word_count': word_count
         }
     
@@ -443,6 +460,10 @@ class PDFGenerator:
                               "Consider regenerating with a more capable model for better results."
                 story.append(Paragraph(warning_text, self.styles['WarningText']))
                 story.append(Spacer(1, 10))
+            elif quality_assessment['score'] < 80:
+                improvement_text = "💡 This report could benefit from more specific historical details, dates, and source citations."
+                story.append(Paragraph(improvement_text, self.styles['HighlightText']))
+                story.append(Spacer(1, 10))
             
             # Add divider line
             story.append(HRFlowable(
@@ -461,6 +482,7 @@ class PDFGenerator:
             story.append(Paragraph(f"<b>Word Count:</b> {quality_assessment['word_count']}", self.styles['MetadataText']))
             story.append(Paragraph(f"<b>Contains Data:</b> {'Yes' if quality_assessment['has_data'] else 'No'}", self.styles['MetadataText']))
             story.append(Paragraph(f"<b>Source URLs:</b> {'Yes' if quality_assessment['has_sources'] else 'No'}", self.styles['MetadataText']))
+            story.append(Paragraph(f"<b>Historical Content:</b> {'Yes' if quality_assessment.get('has_historical_content', False) else 'No'}", self.styles['MetadataText']))
             story.append(Spacer(1, 30))
             
             # Filter and process content
@@ -479,10 +501,19 @@ class PDFGenerator:
                 for issue in quality_assessment['issues']:
                     story.append(Paragraph(f"• {issue}", self.styles['BodyTextCustom']))
                 story.append(Spacer(1, 10))
-                story.append(Paragraph(
-                    "Consider using a more advanced AI model (e.g., GPT-4, Claude-3, Llama-3) for higher quality output.",
-                    self.styles['HighlightText']
-                ))
+                
+                # Provide specific guidance based on content type
+                if quality_assessment.get('has_historical_content', False):
+                    story.append(Paragraph(
+                        "For historical content, consider using a more advanced AI model (e.g., GPT-4, Claude-3, Llama-3) " \
+                        "that can provide more specific dates, historical figures, and detailed events.",
+                        self.styles['HighlightText']
+                    ))
+                else:
+                    story.append(Paragraph(
+                        "Consider using a more advanced AI model (e.g., GPT-4, Claude-3, Llama-3) for higher quality output.",
+                        self.styles['HighlightText']
+                    ))
             
             # Add footer section
             story.append(Spacer(1, 30))
@@ -573,7 +604,7 @@ class PDFGenerator:
                     story.append(Spacer(1, 25))
     
     def _process_section_content(self, content: str, story: list):
-        """Process individual section content with placeholder detection"""
+        """Process individual section content with improved historical content handling"""
         paragraphs = content.split('\n\n')
         
         for paragraph in paragraphs:
@@ -590,10 +621,13 @@ class PDFGenerator:
                         bullet_text = line[1:].strip()
                         bullet_text = self._clean_bullet_text(bullet_text)
                         
-                        # Check if bullet point is placeholder
+                        # Check if bullet point is placeholder - improved for historical content
                         is_placeholder = any(
                             phrase in bullet_text.lower() 
                             for phrase in self.placeholder_phrases
+                        ) and not any(
+                            historical_term in bullet_text.lower()
+                            for historical_term in ['battle', 'treaty', 'kingdom', 'empire', 'dynasty', 'conquest', 'reconquest', 'monarchy', 'republic', 'CE', 'BCE', 'AD', 'BC']
                         )
                         
                         if is_placeholder:
@@ -618,10 +652,13 @@ class PDFGenerator:
             else:
                 combined_text = ' '.join(line.strip() for line in lines if line.strip())
                 if combined_text:
-                    # Check for placeholder content in paragraphs
+                    # Check for placeholder content in paragraphs - improved for historical content
                     is_placeholder = any(
                         re.search(pattern, combined_text, re.IGNORECASE) 
                         for pattern in self.low_quality_patterns
+                    ) and not any(
+                        historical_term in combined_text.lower()
+                        for historical_term in ['battle', 'treaty', 'kingdom', 'empire', 'dynasty', 'conquest', 'reconquest', 'monarchy', 'republic', 'CE', 'BCE', 'AD', 'BC', 'century', 'medieval', 'ancient']
                     )
                     
                     if is_placeholder:
@@ -734,10 +771,15 @@ class PDFGenerator:
         return tmpfile.name
     
     def _is_key_insight(self, text: str) -> bool:
-        """Determine if text contains key insights that should be highlighted"""
+        """Determine if text contains key insights that should be highlighted - improved for historical content"""
         key_indicators = [
             'salary', 'compensation', '€', '$', 'growth', 'increase', 'decrease',
-            'trend', 'outlook', 'forecast', 'projected', 'expected'
+            'trend', 'outlook', 'forecast', 'projected', 'expected',
+            # Historical indicators
+            'battle', 'treaty', 'kingdom', 'empire', 'dynasty', 'conquest', 'reconquest', 
+            'monarchy', 'republic', 'CE', 'BCE', 'AD', 'BC', 'century', 'medieval', 'ancient',
+            'founded', 'established', 'declared', 'conquered', 'defeated', 'signed',
+            'reign', 'rule', 'dynasty', 'dynasty', 'coronation', 'abdication'
         ]
         return any(indicator.lower() in text.lower() for indicator in key_indicators)
     

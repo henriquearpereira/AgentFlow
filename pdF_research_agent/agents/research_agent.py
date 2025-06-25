@@ -2562,24 +2562,7 @@ Use your knowledge of medieval Iberian history to give specific details about {t
 Aim for 400-500 words with substantial historical content."""
 
         try:
-            # Use the model to generate actual historical content
-            import asyncio
-            try:
-                # Create a new event loop if needed
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                
-                # Run the async method
-                content = loop.run_until_complete(self.model_handler.generate_async(prompt))
-                if content and len(content.split()) > 100:
-                    return content
-            except Exception as e:
-                print(f"⚠️ Async model generation failed: {e}")
-            
-            # Fallback to sync method if available
+            # Use synchronous generation instead of async to avoid event loop issues
             if hasattr(self.model_handler, 'generate'):
                 content = self.model_handler.generate(prompt)
                 if content and len(content.split()) > 100:
