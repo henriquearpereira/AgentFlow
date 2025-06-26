@@ -1052,11 +1052,11 @@ const App: React.FC = () => {
             <div className="bg-gradient-to-r from-blue-500 to-purple-600 p-4 rounded-full mr-4">
               <Brain className="w-8 h-8 text-white" />
             </div>
-            <h1 className="text-4xl font-bold text-white">AI Research Agent</h1>
+            <h1 className="text-4xl font-bold text-white">Chimera</h1>
           </div>
           <p className="text-gray-300 text-lg max-w-2xl mx-auto">
-            Generate comprehensive research reports using advanced AI models. 
-            Simply enter your research question and let AI do the heavy lifting.
+            A powerful AI research assistant that combines multiple AI models and search engines to generate comprehensive research reports. 
+            Like the mythical chimera, it merges different capabilities into one unified research experience.
           </p>
         </div>
 
